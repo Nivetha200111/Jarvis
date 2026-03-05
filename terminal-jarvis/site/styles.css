@@ -166,6 +166,12 @@ main {
   font-size: 0.84rem;
 }
 
+.release-note {
+  margin: 0.35rem 0 0;
+  color: #88a7bc;
+  font-size: 0.88rem;
+}
+
 .downloads {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

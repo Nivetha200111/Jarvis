@@ -1,11 +1,11 @@
-const downloadButton = document.getElementById('recommended-download')
-const detectedOsLabel = document.getElementById('detected-os')
+const releasePageUrl = 'https://github.com/Nivetha200111/Jarvis/releases'
+const latestReleaseApi = 'https://api.github.com/repos/Nivetha200111/Jarvis/releases/latest'
 
-const releaseLinks = {
-  linux: 'https://github.com/Nivetha200111/Jarvis/releases/latest/download/terminal-jarvis-linux-x64.tar.gz',
-  windows: 'https://github.com/Nivetha200111/Jarvis/releases/latest/download/terminal-jarvis-windows-x64.zip',
-  fallback: 'https://github.com/Nivetha200111/Jarvis/releases/latest'
-}
+const recommendedDownloadButton = document.getElementById('recommended-download')
+const linuxDownloadButton = document.getElementById('linux-download')
+const windowsDownloadButton = document.getElementById('windows-download')
+const detectedOsLabel = document.getElementById('detected-os')
+const releaseNoteLabel = document.getElementById('release-note')
 
 const detectOs = () => {
   const platform = window.navigator.userAgent.toLowerCase()
@@ -21,20 +21,116 @@ const detectOs = () => {
   return 'fallback'
 }
 
-const os = detectOs()
+const setAnchorTarget = (anchor, href) => {
+  if (!anchor) {
+    return
+  }
 
-if (downloadButton && detectedOsLabel) {
+  anchor.href = href
+}
+
+const getAsset = (assets, pattern) => assets.find((asset) => pattern.test(asset.name))
+
+const updateRecommendedButton = (os, linuxUrl, windowsUrl) => {
+  if (!recommendedDownloadButton) {
+    return
+  }
+
+  if (os === 'windows' && windowsUrl) {
+    setAnchorTarget(recommendedDownloadButton, windowsUrl)
+    recommendedDownloadButton.textContent = 'Download for Windows'
+    return
+  }
+
+  if (os === 'linux' && linuxUrl) {
+    setAnchorTarget(recommendedDownloadButton, linuxUrl)
+    recommendedDownloadButton.textContent = 'Download for Linux'
+    return
+  }
+
+  setAnchorTarget(recommendedDownloadButton, releasePageUrl)
+  recommendedDownloadButton.textContent = 'Open Releases'
+}
+
+const setDetectedOsText = (os) => {
+  if (!detectedOsLabel) {
+    return
+  }
+
   if (os === 'windows') {
-    downloadButton.href = releaseLinks.windows
-    downloadButton.textContent = 'Download for Windows'
     detectedOsLabel.textContent = 'Detected OS: Windows'
-  } else if (os === 'linux') {
-    downloadButton.href = releaseLinks.linux
-    downloadButton.textContent = 'Download for Linux'
+    return
+  }
+
+  if (os === 'linux') {
     detectedOsLabel.textContent = 'Detected OS: Linux'
-  } else {
-    downloadButton.href = releaseLinks.fallback
-    downloadButton.textContent = 'Open Latest Release'
-    detectedOsLabel.textContent = 'Detected OS: Unsupported/Unknown (use release page)'
+    return
+  }
+
+  detectedOsLabel.textContent = 'Detected OS: Unsupported/Unknown'
+}
+
+const showNoReleaseMessage = () => {
+  if (releaseNoteLabel) {
+    releaseNoteLabel.textContent = 'No packaged release artifacts found yet. Use the release page for source snapshots.'
   }
 }
+
+const showReadyMessage = () => {
+  if (releaseNoteLabel) {
+    releaseNoteLabel.textContent = 'Release artifacts detected. Download buttons now point to the latest assets.'
+  }
+}
+
+const configureDownloadLinks = async () => {
+  const os = detectOs()
+
+  setDetectedOsText(os)
+  setAnchorTarget(recommendedDownloadButton, releasePageUrl)
+  setAnchorTarget(linuxDownloadButton, releasePageUrl)
+  setAnchorTarget(windowsDownloadButton, releasePageUrl)
+
+  try {
+    const response = await fetch(latestReleaseApi, {
+      headers: {
+        Accept: 'application/vnd.github+json'
+      }
+    })
+
+    if (!response.ok) {
+      showNoReleaseMessage()
+      updateRecommendedButton(os)
+      return
+    }
+
+    const payload = await response.json()
+    const assets = Array.isArray(payload.assets) ? payload.assets : []
+
+    const linuxAsset = getAsset(assets, /linux.*(x64|amd64).*(\.tar\.gz|\.appimage)$/i)
+    const windowsAsset = getAsset(assets, /windows.*(x64|amd64).*(\.zip|\.exe)$/i)
+
+    const linuxUrl = linuxAsset?.browser_download_url
+    const windowsUrl = windowsAsset?.browser_download_url
+
+    if (linuxUrl) {
+      setAnchorTarget(linuxDownloadButton, linuxUrl)
+    }
+
+    if (windowsUrl) {
+      setAnchorTarget(windowsDownloadButton, windowsUrl)
+    }
+
+    if (!linuxUrl && !windowsUrl) {
+      showNoReleaseMessage()
+    } else {
+      showReadyMessage()
+    }
+
+    updateRecommendedButton(os, linuxUrl, windowsUrl)
+  } catch {
+    showNoReleaseMessage()
+    updateRecommendedButton(os)
+  }
+}
+
+void configureDownloadLinks()
