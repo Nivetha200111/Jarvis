@@ -17,7 +17,7 @@ import {
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown'])
 const IGNORED_DIRECTORIES = new Set(['.obsidian', '.trash', '.git', 'node_modules'])
-const INDEX_MAX_AGE_MS = 15_000
+const INDEX_MAX_AGE_MS = 300_000
 const SEARCH_STOPWORDS = new Set([
   'the',
   'and',

@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "node ./scripts/build.mjs && tsc -p tsconfig.json",
-    "dev": "npm run build && electron ./dist/main.cjs",
+    "dev": "npm run build && node ./scripts/run-electron.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"test/**/*.ts\"",
     "test": "vitest run --config ../../vitest.config.ts"

@@ -10,7 +10,10 @@ const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
   noteCount: 0
 }
 const ENDING_INTENT_PATTERN = /\b(end|ending|ends|final|last|conclusion|epilogue|finish)\b/i
-const CONTEXT_BUDGET_CHARS = 18_000
+const CONTEXT_BUDGET_CHARS = 9_000
+const RECENT_NOTE_SCAN_LIMIT = 120
+const BROAD_CONTEXT_NOTE_LIMIT = 8
+const MATCH_CONTEXT_NOTE_LIMIT = 3
 
 const createContextExcerpt = (
   content: string,
@@ -48,6 +51,7 @@ export const App = () => {
   const pendingTokenRef = useRef('')
   const rafRef = useRef<number | null>(null)
   const streamUnsubscribeRef = useRef<(() => void) | null>(null)
+  const noteContentCacheRef = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     window.jarvis.modelList().then((items) => {
@@ -70,6 +74,21 @@ export const App = () => {
   useEffect(() => {
     statusRef.current = status
   }, [status])
+
+  useEffect(() => {
+    noteContentCacheRef.current.clear()
+  }, [vaultStatus.connected, vaultStatus.vaultPath])
+
+  const readVaultNoteCached = useCallback(async (notePath: string): Promise<string> => {
+    const cached = noteContentCacheRef.current.get(notePath)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const content = await window.jarvis.obsidianReadNote(notePath)
+    noteContentCacheRef.current.set(notePath, content)
+    return content
+  }, [])
 
   const canSend = useMemo(() => prompt.trim().length > 0, [prompt])
   const latestAssistantReply = useMemo(() => {
@@ -106,25 +125,35 @@ export const App = () => {
       const endingIntent = ENDING_INTENT_PATTERN.test(userPrompt)
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
       if (matches.length === 0) {
-        const notes = await window.jarvis.obsidianListNotes(500)
+        const notes = await window.jarvis.obsidianListNotes(RECENT_NOTE_SCAN_LIMIT)
         if (notes.length === 0) {
           return { content: userPrompt, matchCount: 0, fallbackUsed: false }
         }
 
+        const broadNotes = notes.slice(0, BROAD_CONTEXT_NOTE_LIMIT)
+        const broadExcerpts = await Promise.all(
+          broadNotes.map(async (note) => {
+            const raw = await readVaultNoteCached(note.path)
+            return {
+              path: note.path,
+              excerpt: createContextExcerpt(raw, endingIntent, 500)
+            }
+          })
+        )
+
         let usedNotes = 0
         let collected = ''
-        for (const note of notes) {
+        for (const entry of broadExcerpts) {
           if (collected.length >= CONTEXT_BUDGET_CHARS) {
             break
           }
 
-          const raw = await window.jarvis.obsidianReadNote(note.path)
-          const excerpt = createContextExcerpt(raw, endingIntent, 700)
+          const excerpt = entry.excerpt
           if (!excerpt.trim()) {
             continue
           }
 
-          const block = `[${note.path}]\n${excerpt}\n\n`
+          const block = `[${entry.path}]\n${excerpt}\n\n`
           if (collected.length + block.length > CONTEXT_BUDGET_CHARS) {
             break
           }
@@ -150,16 +179,24 @@ export const App = () => {
         }
       }
 
-      const topMatches = matches.slice(0, 3)
+      const topMatches = matches.slice(0, MATCH_CONTEXT_NOTE_LIMIT)
+      const matchExcerpts = await Promise.all(
+        topMatches.map(async (match) => {
+          const note = await readVaultNoteCached(match.path)
+          return {
+            path: match.path,
+            excerpt: createContextExcerpt(note, endingIntent, 1200)
+          }
+        })
+      )
       let excerpts = ''
       let usedNotes = 0
-      for (const match of topMatches) {
-        const note = await window.jarvis.obsidianReadNote(match.path)
-        const excerpt = createContextExcerpt(note, endingIntent, 1600)
+      for (const entry of matchExcerpts) {
+        const excerpt = entry.excerpt
         if (!excerpt.trim()) {
           continue
         }
-        const block = `[${match.path}]\n${excerpt}\n\n`
+        const block = `[${entry.path}]\n${excerpt}\n\n`
         if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) {
           break
         }
@@ -186,7 +223,7 @@ export const App = () => {
     } catch {
       return { content: userPrompt, matchCount: 0, fallbackUsed: false }
     }
-  }, [useVaultContext, vaultStatus.connected])
+  }, [readVaultNoteCached, useVaultContext, vaultStatus.connected])
 
   const setStatusSafe = useCallback((next: string): void => {
     if (statusRef.current === next) {
