@@ -17,6 +17,7 @@ import {
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown'])
 const IGNORED_DIRECTORIES = new Set(['.obsidian', '.trash', '.git', 'node_modules'])
+const INDEX_MAX_AGE_MS = 15_000
 const SEARCH_STOPWORDS = new Set([
   'the',
   'and',
@@ -38,10 +39,20 @@ const SEARCH_STOPWORDS = new Set([
   'tell',
   'please',
   'there',
-  'their',
-  'ends',
-  'end'
+  'their'
 ])
+const ENDING_TERMS = new Set(['end', 'ending', 'ends', 'final', 'last', 'conclusion', 'epilogue', 'finish'])
+
+interface VaultIndexEntry {
+  absolutePath: string
+  path: string
+  title: string
+  sizeBytes: number
+  updatedAt: number
+  content: string
+  lowerContent: string
+  lowerPath: string
+}
 
 export interface ObsidianVaultStatus {
   connected: boolean
@@ -200,7 +211,23 @@ const toSafeLimit = (value: number | undefined, fallback: number, max: number): 
   return Math.min(rounded, max)
 }
 
-const toSearchTerms = (query: string): string[] => {
+const stemTerm = (term: string): string => {
+  if (term.length > 5 && term.endsWith('ing')) {
+    return term.slice(0, -3)
+  }
+  if (term.length > 4 && term.endsWith('ed')) {
+    return term.slice(0, -2)
+  }
+  if (term.length > 4 && term.endsWith('es')) {
+    return term.slice(0, -2)
+  }
+  if (term.length > 3 && term.endsWith('s')) {
+    return term.slice(0, -1)
+  }
+  return term
+}
+
+const toBaseSearchTerms = (query: string): string[] => {
   const raw = query.toLowerCase().match(/[a-z0-9_]+/g) ?? []
   const deduped = new Set<string>()
 
@@ -217,6 +244,22 @@ const toSearchTerms = (query: string): string[] => {
   return [...deduped]
 }
 
+const toSearchTerms = (query: string): string[] => {
+  const baseTerms = toBaseSearchTerms(query)
+
+  const expanded = new Set<string>(baseTerms)
+  for (const term of baseTerms) {
+    expanded.add(stemTerm(term))
+    if (ENDING_TERMS.has(term) || ENDING_TERMS.has(stemTerm(term))) {
+      for (const endingTerm of ENDING_TERMS) {
+        expanded.add(endingTerm)
+      }
+    }
+  }
+
+  return [...expanded]
+}
+
 const ensureConnected = (vaultPath: string | null): string => {
   if (!vaultPath) {
     throw new Error('Obsidian vault is not connected')
@@ -229,14 +272,50 @@ export const createObsidianVaultService = (
   options: CreateObsidianVaultServiceOptions = {}
 ): ObsidianVaultService => {
   let connectedVaultPath: string | null = null
+  let index: VaultIndexEntry[] | null = null
+  let indexBuiltAt = 0
+
+  const rebuildIndex = (vaultPath: string): VaultIndexEntry[] => {
+    const files = collectMarkdownFiles(vaultPath, 10_000)
+    const next: VaultIndexEntry[] = files.map((absolutePath) => {
+      const stats = statSync(absolutePath)
+      const notePath = toRelativePath(vaultPath, absolutePath)
+      const content = readFileSync(absolutePath, 'utf8')
+
+      return {
+        absolutePath,
+        path: notePath,
+        title: toTitle(notePath),
+        sizeBytes: stats.size,
+        updatedAt: stats.mtimeMs,
+        content,
+        lowerContent: content.toLowerCase(),
+        lowerPath: notePath.toLowerCase()
+      }
+    })
+
+    index = next
+    indexBuiltAt = Date.now()
+    return next
+  }
+
+  const getIndex = (vaultPath: string, force = false): VaultIndexEntry[] => {
+    if (force || !index || Date.now() - indexBuiltAt > INDEX_MAX_AGE_MS) {
+      return rebuildIndex(vaultPath)
+    }
+    return index
+  }
 
   const connect = (vaultPath: string): ObsidianVaultStatus => {
     connectedVaultPath = normalizeVaultPath(vaultPath)
+    rebuildIndex(connectedVaultPath)
     return status()
   }
 
   const disconnect = (): void => {
     connectedVaultPath = null
+    index = null
+    indexBuiltAt = 0
   }
 
   const status = (): ObsidianVaultStatus => {
@@ -248,30 +327,28 @@ export const createObsidianVaultService = (
       }
     }
 
+    const indexedNotes = getIndex(connectedVaultPath)
     return {
       connected: true,
       vaultPath: connectedVaultPath,
-      noteCount: collectMarkdownFiles(connectedVaultPath, 10_000).length
+      noteCount: indexedNotes.length
     }
   }
 
   const listNotes = (limit?: number): ObsidianNoteSummary[] => {
     const vaultPath = ensureConnected(connectedVaultPath)
     const safeLimit = toSafeLimit(limit, 250, 5_000)
-    const files = collectMarkdownFiles(vaultPath, safeLimit)
+    const entries = getIndex(vaultPath)
 
-    return files
-      .map((filePath) => {
-        const stats = statSync(filePath)
-        const notePath = toRelativePath(vaultPath, filePath)
-        return {
-          path: notePath,
-          title: toTitle(notePath),
-          sizeBytes: stats.size,
-          updatedAt: stats.mtimeMs
-        }
-      })
+    return entries
+      .map((entry) => ({
+        path: entry.path,
+        title: entry.title,
+        sizeBytes: entry.sizeBytes,
+        updatedAt: entry.updatedAt
+      }))
       .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, safeLimit)
   }
 
   const searchNotes = (query: string, limit?: number): ObsidianSearchHit[] => {
@@ -282,20 +359,25 @@ export const createObsidianVaultService = (
     }
 
     const safeLimit = toSafeLimit(limit, 20, 200)
-    const files = collectMarkdownFiles(vaultPath, 5_000)
+    const entries = getIndex(vaultPath)
     const lowerQuery = trimmed.toLowerCase()
+    const baseTerms = toBaseSearchTerms(trimmed)
     const terms = toSearchTerms(trimmed)
+    const baseTermStems = new Set<string>(
+      baseTerms.flatMap((term) => [term, stemTerm(term)])
+    )
+    const minimumBaseMatches = baseTerms.length === 0 ? 0 : baseTerms.length === 1 ? 1 : 2
     const scoredResults: Array<ObsidianSearchHit & { score: number; updatedAt: number }> = []
 
-    for (const filePath of files) {
-      const notePath = toRelativePath(vaultPath, filePath)
-      const lowerPath = notePath.toLowerCase()
-      const content = readFileSync(filePath, 'utf8')
-      const lowerContent = content.toLowerCase()
-      const stats = statSync(filePath)
+    for (const entry of entries) {
+      const notePath = entry.path
+      const lowerPath = entry.lowerPath
+      const content = entry.content
+      const lowerContent = entry.lowerContent
 
       let score = 0
       let bestIndex = -1
+      const matchedBaseTerms = new Set<string>()
 
       const phraseIndex = lowerContent.indexOf(lowerQuery)
       if (phraseIndex >= 0) {
@@ -305,16 +387,27 @@ export const createObsidianVaultService = (
 
       for (const term of terms) {
         const termIndex = lowerContent.indexOf(term)
+        const isBaseTerm = baseTermStems.has(term)
         if (termIndex >= 0) {
-          score += 12
+          score += isBaseTerm ? 16 : 5
+          if (isBaseTerm) {
+            matchedBaseTerms.add(stemTerm(term))
+          }
           if (bestIndex < 0 || termIndex < bestIndex) {
             bestIndex = termIndex
           }
         }
 
         if (lowerPath.includes(term)) {
-          score += 6
+          score += isBaseTerm ? 8 : 3
+          if (isBaseTerm) {
+            matchedBaseTerms.add(stemTerm(term))
+          }
         }
+      }
+
+      if (phraseIndex < 0 && matchedBaseTerms.size < minimumBaseMatches) {
+        continue
       }
 
       if (score <= 0 || bestIndex < 0) {
@@ -329,11 +422,11 @@ export const createObsidianVaultService = (
 
       scoredResults.push({
         path: notePath,
-        title: toTitle(notePath),
+        title: entry.title,
         line,
         snippet,
         score,
-        updatedAt: stats.mtimeMs
+        updatedAt: entry.updatedAt
       })
     }
 
@@ -358,11 +451,35 @@ export const createObsidianVaultService = (
     const normalized = normalizeNotePath(notePath)
     const absolutePath = ensureInsideVault(vaultPath, normalized)
 
+    const entries = getIndex(vaultPath)
+    const existing = entries.find((entry) => entry.path === normalized)
+    if (existing) {
+      return existing.content
+    }
+
     if (!existsSync(absolutePath)) {
       throw new Error(`Note not found: ${normalized}`)
     }
 
-    return readFileSync(absolutePath, 'utf8')
+    const content = readFileSync(absolutePath, 'utf8')
+    const stats = statSync(absolutePath)
+    const cachedEntry: VaultIndexEntry = {
+      absolutePath,
+      path: normalized,
+      title: toTitle(normalized),
+      sizeBytes: stats.size,
+      updatedAt: stats.mtimeMs,
+      content,
+      lowerContent: content.toLowerCase(),
+      lowerPath: normalized.toLowerCase()
+    }
+
+    if (index) {
+      index = [...index.filter((entry) => entry.path !== normalized), cachedEntry]
+      indexBuiltAt = Date.now()
+    }
+
+    return content
   }
 
   const writeNote = (
@@ -379,6 +496,23 @@ export const createObsidianVaultService = (
     const data = String(content)
     const flags = mode === 'append' ? 'a' : 'w'
     writeFileSync(absolutePath, data, { encoding: 'utf8', flag: flags })
+    const updatedContent = readFileSync(absolutePath, 'utf8')
+    const stats = statSync(absolutePath)
+    const updatedEntry: VaultIndexEntry = {
+      absolutePath,
+      path: normalized,
+      title: toTitle(normalized),
+      sizeBytes: stats.size,
+      updatedAt: stats.mtimeMs,
+      content: updatedContent,
+      lowerContent: updatedContent.toLowerCase(),
+      lowerPath: normalized.toLowerCase()
+    }
+
+    if (index) {
+      index = [...index.filter((entry) => entry.path !== normalized), updatedEntry]
+      indexBuiltAt = Date.now()
+    }
 
     return {
       path: normalized,

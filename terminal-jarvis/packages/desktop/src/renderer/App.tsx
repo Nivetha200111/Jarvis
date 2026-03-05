@@ -9,6 +9,28 @@ const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
   vaultPath: null,
   noteCount: 0
 }
+const ENDING_INTENT_PATTERN = /\b(end|ending|ends|final|last|conclusion|epilogue|finish)\b/i
+const CONTEXT_BUDGET_CHARS = 18_000
+
+const createContextExcerpt = (
+  content: string,
+  endingIntent: boolean,
+  maxChars = 1800
+): string => {
+  if (!content) {
+    return ''
+  }
+
+  if (endingIntent) {
+    const tailChars = Math.max(500, Math.floor(maxChars * 0.8))
+    const headChars = Math.max(120, Math.floor(maxChars * 0.2))
+    const tail = content.slice(Math.max(0, content.length - tailChars))
+    const head = content.length > headChars ? content.slice(0, headChars) : ''
+    return head ? `${head}\n...\n${tail}` : tail
+  }
+
+  return content.slice(0, maxChars)
+}
 
 export const App = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -80,36 +102,68 @@ export const App = () => {
     }
 
     try {
+      const endingIntent = ENDING_INTENT_PATTERN.test(userPrompt)
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
       if (matches.length === 0) {
-        const notes = await window.jarvis.obsidianListNotes(1)
-        const fallbackPath = notes[0]?.path
-        if (!fallbackPath) {
+        const notes = await window.jarvis.obsidianListNotes(500)
+        if (notes.length === 0) {
           return { content: userPrompt, matchCount: 0, fallbackUsed: false }
         }
 
-        const fallbackNote = await window.jarvis.obsidianReadNote(fallbackPath)
+        let usedNotes = 0
+        let collected = ''
+        for (const note of notes) {
+          if (collected.length >= CONTEXT_BUDGET_CHARS) {
+            break
+          }
+
+          const raw = await window.jarvis.obsidianReadNote(note.path)
+          const excerpt = createContextExcerpt(raw, endingIntent, 700)
+          if (!excerpt.trim()) {
+            continue
+          }
+
+          const block = `[${note.path}]\n${excerpt}\n\n`
+          if (collected.length + block.length > CONTEXT_BUDGET_CHARS) {
+            break
+          }
+
+          collected += block
+          usedNotes += 1
+        }
+
+        if (usedNotes === 0) {
+          return { content: userPrompt, matchCount: 0, fallbackUsed: false }
+        }
+
         const contextBlock = [
           '[Obsidian context]',
-          'No exact lexical note match found, using latest note excerpt.',
-          `[Latest note: ${fallbackPath}]`,
-          fallbackNote.slice(0, 1800)
+          'No direct lexical match found, so using excerpts across vault notes.',
+          collected
         ].join('\n')
 
         return {
           content: `${userPrompt}\n\n${contextBlock}`,
-          matchCount: 1,
+          matchCount: usedNotes,
           fallbackUsed: true
         }
       }
 
       const topMatches = matches.slice(0, 3)
-      const topPath = topMatches[0]?.path
-      let topExcerpt = ''
-
-      if (topPath) {
-        const note = await window.jarvis.obsidianReadNote(topPath)
-        topExcerpt = note.slice(0, 1800)
+      let excerpts = ''
+      let usedNotes = 0
+      for (const match of topMatches) {
+        const note = await window.jarvis.obsidianReadNote(match.path)
+        const excerpt = createContextExcerpt(note, endingIntent, 1600)
+        if (!excerpt.trim()) {
+          continue
+        }
+        const block = `[${match.path}]\n${excerpt}\n\n`
+        if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) {
+          break
+        }
+        excerpts += block
+        usedNotes += 1
       }
 
       const snippets = topMatches
@@ -120,12 +174,12 @@ export const App = () => {
         '[Obsidian context]',
         'Use this only if relevant to the user request.',
         snippets,
-        topExcerpt ? `\n[Top note excerpt: ${topPath}]\n${topExcerpt}` : ''
+        excerpts ? `\n[Relevant note excerpts]\n${excerpts}` : ''
       ].join('\n')
 
       return {
         content: `${userPrompt}\n\n${contextBlock}`,
-        matchCount: topMatches.length,
+        matchCount: Math.max(topMatches.length, usedNotes),
         fallbackUsed: false
       }
     } catch {
@@ -300,7 +354,7 @@ export const App = () => {
         next.push({
           type: 'thinking',
           content: fallbackContextUsed
-            ? 'No direct match found; injected latest vault note excerpt for context.'
+            ? 'No direct match found; injected broad vault excerpts for context.'
             : `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
         })
       }

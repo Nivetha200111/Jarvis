@@ -53,7 +53,7 @@ describe('obsidian-vault-service', () => {
     )
 
     const vault = createObsidianVaultService({ initialVaultPath: vaultPath })
-    const search = vault.searchNotes('tell me where the story ends', 5)
+    const search = vault.searchNotes('where story ends', 5)
 
     expect(search.length).toBeGreaterThan(0)
     expect(search[0]?.path).toBe('Tier ZERO.md')
