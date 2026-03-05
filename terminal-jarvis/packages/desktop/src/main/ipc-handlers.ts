@@ -42,6 +42,8 @@ export const streamChat = async (
   request: ChatCompletionRequest,
   onEvent: (event: Omit<StreamEvent, 'requestId'>) => void
 ): Promise<void> => {
+  let doneSent = false
+
   for await (const chunk of services.chatService.streamCompletion(request)) {
     onEvent({
       type: 'token',
@@ -53,7 +55,14 @@ export const streamChat = async (
       onEvent({
         type: 'done'
       })
+      doneSent = true
     }
+  }
+
+  if (!doneSent) {
+    onEvent({
+      type: 'done'
+    })
   }
 }
 

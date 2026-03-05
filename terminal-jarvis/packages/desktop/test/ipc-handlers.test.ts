@@ -14,6 +14,7 @@ import {
   streamChat,
   writeObsidianNote
 } from '../src/main/ipc-handlers.js'
+import type { DesktopServices } from '../src/main/create-services.js'
 
 process.env.JARVIS_ENGINE = 'mock'
 
@@ -83,5 +84,42 @@ describe('desktop IPC handlers', () => {
 
     const refreshed = getObsidianStatus(services)
     expect(refreshed.connected).toBe(true)
+  })
+
+  it('emits done when stream ends without done-marked chunks', async () => {
+    const fakeServices = {
+      chatService: {
+        streamCompletion: async function* () {
+          yield { token: 'partial', index: 1, done: false }
+        },
+        generateCompletion: async () => ({
+          model: 'mock',
+          content: 'partial',
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        })
+      },
+      agentService: {} as DesktopServices['agentService'],
+      modelManager: {} as DesktopServices['modelManager'],
+      engine: { getLoadedModel: () => null } as DesktopServices['engine'],
+      provider: 'mock' as DesktopServices['provider'],
+      configManager: {} as DesktopServices['configManager'],
+      obsidianVaultService: {} as DesktopServices['obsidianVaultService']
+    } as DesktopServices
+
+    const seen: Array<'token' | 'done' | 'error'> = []
+
+    await streamChat(
+      fakeServices,
+      {
+        model: 'mock',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: true
+      },
+      (event) => {
+        seen.push(event.type)
+      }
+    )
+
+    expect(seen.filter((type) => type === 'done')).toHaveLength(1)
   })
 })
