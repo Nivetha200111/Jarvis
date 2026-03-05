@@ -43,4 +43,19 @@ describe('obsidian-vault-service', () => {
     expect(() => vault.readNote('../outside.md')).toThrowError(/inside/)
     expect(() => vault.writeNote('scratch.txt', 'not markdown')).toThrowError(/markdown/)
   })
+
+  it('matches natural language queries using ranked keywords', () => {
+    const vaultPath = mkdtempSync(join(tmpdir(), 'jarvis-core-vault-search-'))
+    writeFileSync(
+      join(vaultPath, 'Tier ZERO.md'),
+      'The story ends when Arin opens the final gate and chooses exile.',
+      'utf8'
+    )
+
+    const vault = createObsidianVaultService({ initialVaultPath: vaultPath })
+    const search = vault.searchNotes('tell me where the story ends', 5)
+
+    expect(search.length).toBeGreaterThan(0)
+    expect(search[0]?.path).toBe('Tier ZERO.md')
+  })
 })

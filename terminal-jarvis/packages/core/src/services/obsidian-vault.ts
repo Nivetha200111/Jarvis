@@ -17,6 +17,31 @@ import {
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown'])
 const IGNORED_DIRECTORIES = new Set(['.obsidian', '.trash', '.git', 'node_modules'])
+const SEARCH_STOPWORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'what',
+  'where',
+  'when',
+  'which',
+  'from',
+  'into',
+  'your',
+  'have',
+  'been',
+  'does',
+  'about',
+  'tell',
+  'please',
+  'there',
+  'their',
+  'ends',
+  'end'
+])
 
 export interface ObsidianVaultStatus {
   connected: boolean
@@ -175,6 +200,23 @@ const toSafeLimit = (value: number | undefined, fallback: number, max: number): 
   return Math.min(rounded, max)
 }
 
+const toSearchTerms = (query: string): string[] => {
+  const raw = query.toLowerCase().match(/[a-z0-9_]+/g) ?? []
+  const deduped = new Set<string>()
+
+  for (const term of raw) {
+    if (term.length < 3) {
+      continue
+    }
+    if (SEARCH_STOPWORDS.has(term)) {
+      continue
+    }
+    deduped.add(term)
+  }
+
+  return [...deduped]
+}
+
 const ensureConnected = (vaultPath: string | null): string => {
   if (!vaultPath) {
     throw new Error('Obsidian vault is not connected')
@@ -242,35 +284,73 @@ export const createObsidianVaultService = (
     const safeLimit = toSafeLimit(limit, 20, 200)
     const files = collectMarkdownFiles(vaultPath, 5_000)
     const lowerQuery = trimmed.toLowerCase()
-    const results: ObsidianSearchHit[] = []
+    const terms = toSearchTerms(trimmed)
+    const scoredResults: Array<ObsidianSearchHit & { score: number; updatedAt: number }> = []
 
     for (const filePath of files) {
-      if (results.length >= safeLimit) {
-        break
-      }
-
+      const notePath = toRelativePath(vaultPath, filePath)
+      const lowerPath = notePath.toLowerCase()
       const content = readFileSync(filePath, 'utf8')
       const lowerContent = content.toLowerCase()
-      const index = lowerContent.indexOf(lowerQuery)
-      if (index < 0) {
+      const stats = statSync(filePath)
+
+      let score = 0
+      let bestIndex = -1
+
+      const phraseIndex = lowerContent.indexOf(lowerQuery)
+      if (phraseIndex >= 0) {
+        score += 100
+        bestIndex = phraseIndex
+      }
+
+      for (const term of terms) {
+        const termIndex = lowerContent.indexOf(term)
+        if (termIndex >= 0) {
+          score += 12
+          if (bestIndex < 0 || termIndex < bestIndex) {
+            bestIndex = termIndex
+          }
+        }
+
+        if (lowerPath.includes(term)) {
+          score += 6
+        }
+      }
+
+      if (score <= 0 || bestIndex < 0) {
         continue
       }
 
-      const start = Math.max(0, index - 80)
-      const end = Math.min(content.length, index + lowerQuery.length + 120)
+      const snippetWindow = Math.max(160, Math.min(320, lowerQuery.length * 3))
+      const start = Math.max(0, bestIndex - 80)
+      const end = Math.min(content.length, bestIndex + snippetWindow)
       const snippet = content.slice(start, end).replace(/\s+/g, ' ').trim()
-      const line = content.slice(0, index).split(/\r?\n/).length
-      const notePath = toRelativePath(vaultPath, filePath)
+      const line = content.slice(0, bestIndex).split(/\r?\n/).length
 
-      results.push({
+      scoredResults.push({
         path: notePath,
         title: toTitle(notePath),
         line,
-        snippet
+        snippet,
+        score,
+        updatedAt: stats.mtimeMs
       })
     }
 
-    return results
+    return scoredResults
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score
+        }
+        return b.updatedAt - a.updatedAt
+      })
+      .slice(0, safeLimit)
+      .map(({ path, title, line, snippet }) => ({
+        path,
+        title,
+        line,
+        snippet
+      }))
   }
 
   const readNote = (notePath: string): string => {

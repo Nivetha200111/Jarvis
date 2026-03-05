@@ -74,15 +74,33 @@ export const App = () => {
 
   const buildPromptWithVaultContext = useCallback(async (
     userPrompt: string
-  ): Promise<{ content: string; matchCount: number }> => {
+  ): Promise<{ content: string; matchCount: number; fallbackUsed: boolean }> => {
     if (!useVaultContext || !vaultStatus.connected) {
-      return { content: userPrompt, matchCount: 0 }
+      return { content: userPrompt, matchCount: 0, fallbackUsed: false }
     }
 
     try {
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
       if (matches.length === 0) {
-        return { content: userPrompt, matchCount: 0 }
+        const notes = await window.jarvis.obsidianListNotes(1)
+        const fallbackPath = notes[0]?.path
+        if (!fallbackPath) {
+          return { content: userPrompt, matchCount: 0, fallbackUsed: false }
+        }
+
+        const fallbackNote = await window.jarvis.obsidianReadNote(fallbackPath)
+        const contextBlock = [
+          '[Obsidian context]',
+          'No exact lexical note match found, using latest note excerpt.',
+          `[Latest note: ${fallbackPath}]`,
+          fallbackNote.slice(0, 1800)
+        ].join('\n')
+
+        return {
+          content: `${userPrompt}\n\n${contextBlock}`,
+          matchCount: 1,
+          fallbackUsed: true
+        }
       }
 
       const topMatches = matches.slice(0, 3)
@@ -107,10 +125,11 @@ export const App = () => {
 
       return {
         content: `${userPrompt}\n\n${contextBlock}`,
-        matchCount: topMatches.length
+        matchCount: topMatches.length,
+        fallbackUsed: false
       }
     } catch {
-      return { content: userPrompt, matchCount: 0 }
+      return { content: userPrompt, matchCount: 0, fallbackUsed: false }
     }
   }, [useVaultContext, vaultStatus.connected])
 
@@ -258,12 +277,14 @@ export const App = () => {
 
     let content = text
     let injectedMatches = 0
+    let fallbackContextUsed = false
 
     if (vaultStatus.connected && useVaultContext) {
       setStatusSafe('retrieving vault context...')
       const enriched = await buildPromptWithVaultContext(text)
       content = enriched.content
       injectedMatches = enriched.matchCount
+      fallbackContextUsed = enriched.fallbackUsed
     }
 
     const forceAgentMode = attachedPaths.length > 0
@@ -278,7 +299,9 @@ export const App = () => {
       if (injectedMatches > 0) {
         next.push({
           type: 'thinking',
-          content: `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
+          content: fallbackContextUsed
+            ? 'No direct match found; injected latest vault note excerpt for context.'
+            : `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
         })
       }
       return next
