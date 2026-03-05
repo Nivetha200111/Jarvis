@@ -8,6 +8,7 @@ test-results
 # Build outputs
 packages/*/dist
 packages/*/dist-types
+.release
 
 # Electron
 packages/desktop/.electron

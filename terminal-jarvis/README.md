@@ -92,3 +92,7 @@ Configuration defaults target `~/.jarvis` for future persistence:
 - Publishes:
   - `terminal-jarvis-linux-x64.tar.gz`
   - `terminal-jarvis-windows-x64.zip`
+- Bundle includes:
+  - `app/` (desktop app build)
+  - `electron/` runtime
+  - launcher scripts: `run-jarvis.sh` (Linux) or `run-jarvis.bat` (Windows)

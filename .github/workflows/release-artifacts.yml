@@ -45,14 +45,16 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: terminal-jarvis
         run: |
-          tar -czf terminal-jarvis-linux-x64.tar.gz -C packages/desktop dist
+          node ./scripts/create-portable-bundle.mjs --platform linux --out .release/terminal-jarvis-linux-x64
+          tar -czf terminal-jarvis-linux-x64.tar.gz -C .release terminal-jarvis-linux-x64
 
       - name: Create Windows bundle
         if: runner.os == 'Windows'
         working-directory: terminal-jarvis
         shell: pwsh
         run: |
-          Compress-Archive -Path packages/desktop/dist/* -DestinationPath terminal-jarvis-windows-x64.zip -Force
+          node .\scripts\create-portable-bundle.mjs --platform windows --out .release/terminal-jarvis-windows-x64
+          Compress-Archive -Path .release\terminal-jarvis-windows-x64 -DestinationPath terminal-jarvis-windows-x64.zip -Force
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4

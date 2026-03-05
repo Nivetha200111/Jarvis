@@ -118,7 +118,7 @@ ollama pull gemma2</code></pre>
           <div class="step">
             <div class="step-num">03</div>
             <h3>Download &amp; launch Jarvis</h3>
-            <p>Grab the build for your OS, extract, and run. Jarvis auto-detects Ollama and your pulled models.</p>
+            <p>Grab the build for your OS, extract, and run the included launcher. No npm install is required.</p>
             <div class="code-block">
               <div class="code-header">
                 <span class="code-dot"></span>
@@ -128,11 +128,11 @@ ollama pull gemma2</code></pre>
               </div>
               <pre><code><span class="c-dim"># Linux</span>
 tar -xzf terminal-jarvis-linux-x64.tar.gz
-cd dist
-npx --yes electron@40 ./main.cjs
+cd terminal-jarvis-linux-x64
+./run-jarvis.sh
 
-<span class="c-dim"># Windows &mdash; extract zip, then:</span>
-npx --yes electron@40 .\main.cjs</code></pre>
+<span class="c-dim"># Windows &mdash; extract zip, then run:</span>
+run-jarvis.bat</code></pre>
             </div>
             <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then chat. Use <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code> inside your vault.</p>
           </div>
@@ -184,7 +184,7 @@ npx --yes electron@40 .\main.cjs</code></pre>
             <span class="os-tag">Linux</span>
             <span class="arch">x64 / tar.gz</span>
           </div>
-          <p>Portable tarball. Unpack and run.</p>
+          <p>Portable tarball with bundled runtime. Unpack and run <code>./run-jarvis.sh</code>.</p>
           <div class="dl-actions">
             <a id="linux-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
               >Download</a
@@ -199,7 +199,7 @@ npx --yes electron@40 .\main.cjs</code></pre>
             <span class="os-tag">Windows</span>
             <span class="arch">x64 / zip</span>
           </div>
-          <p>Portable zip for Windows 10+.</p>
+          <p>Portable zip with bundled runtime. Unzip and run <code>run-jarvis.bat</code>.</p>
           <div class="dl-actions">
             <a id="windows-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
               >Download</a
