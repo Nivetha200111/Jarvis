@@ -11,98 +11,114 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="bg-layer" aria-hidden="true"></div>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="shape shape-1" aria-hidden="true"></div>
+    <div class="shape shape-2" aria-hidden="true"></div>
+    <div class="shape shape-3" aria-hidden="true"></div>
+
     <header class="topbar">
       <div class="brand">
-        <span class="brand-dot"></span>
-        <span>Terminal Jarvis</span>
+        <span class="brand-mark" aria-hidden="true">//</span>
+        <span>terminal jarvis</span>
       </div>
       <a class="repo-link" href="https://github.com/Nivetha200111/Jarvis" target="_blank" rel="noreferrer"
-        >GitHub</a
+        >src &rarr;</a
       >
     </header>
 
     <main>
-      <section class="hero reveal">
-        <p class="pill">Privacy-First Local AI</p>
-        <h1>Run your own assistant. No cloud. No telemetry.</h1>
+      <section class="hero">
+        <div class="hero-label">local inference</div>
+        <h1>Your machine.<br/>Your model.<br/>Your data.</h1>
         <p class="lead">
-          Terminal Jarvis brings local GGUF inference to terminal, desktop, and API workflows.
-          Choose your OS and start in minutes.
+          Terminal Jarvis runs GGUF models locally across terminal, desktop, and API.
+          Zero cloud. Zero telemetry. Just inference.
         </p>
         <div class="hero-actions">
           <a id="recommended-download" class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
             >Download Recommended Build</a
           >
-          <a class="btn btn-secondary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
+          <a class="btn btn-ghost" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
             >All Releases</a
           >
         </div>
-        <p id="detected-os" class="detected-os">Detecting your platform...</p>
-        <p id="release-note" class="release-note">Checking release artifacts...</p>
+        <div class="hero-meta">
+          <span id="detected-os" class="meta-tag">Detecting platform...</span>
+          <span id="release-note" class="meta-tag meta-dim">Checking artifacts...</span>
+        </div>
       </section>
 
-      <section class="downloads reveal">
-        <article class="card card-linux">
-          <h2>Linux</h2>
-          <p>Portable tarball bundle for x64 Linux machines.</p>
-          <div class="card-actions">
-            <a id="linux-download" class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
-              >Download tar.gz</a
+      <section class="downloads">
+        <div class="dl-card">
+          <div class="dl-card-head">
+            <span class="os-tag">Linux</span>
+            <span class="arch">x64 / tar.gz</span>
+          </div>
+          <p>Portable tarball. Unpack and run.</p>
+          <div class="dl-actions">
+            <a id="linux-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
+              >Download</a
             >
-            <a class="btn btn-tertiary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
-              >Open release page</a
+            <a class="btn btn-ghost btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
+              >Release page</a
             >
           </div>
-        </article>
-
-        <article class="card card-windows">
-          <h2>Windows</h2>
-          <p>Portable zip bundle for Windows 10+.</p>
-          <div class="card-actions">
-            <a id="windows-download" class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
-              >Download .zip</a
+        </div>
+        <div class="dl-card">
+          <div class="dl-card-head">
+            <span class="os-tag">Windows</span>
+            <span class="arch">x64 / zip</span>
+          </div>
+          <p>Portable zip for Windows 10+.</p>
+          <div class="dl-actions">
+            <a id="windows-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
+              >Download</a
             >
-            <a class="btn btn-tertiary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
-              >Open release page</a
+            <a class="btn btn-ghost btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
+              >Release page</a
             >
           </div>
-        </article>
+        </div>
       </section>
 
-      <section class="grid reveal">
-        <article class="tile">
+      <section class="features">
+        <div class="feature">
+          <span class="feature-num">01</span>
           <h3>Terminal REPL</h3>
-          <p>Interactive chat, streaming output, and script-friendly pipe mode.</p>
-        </article>
-        <article class="tile">
+          <p>Interactive chat, streaming, pipe mode.</p>
+        </div>
+        <div class="feature">
+          <span class="feature-num">02</span>
           <h3>Desktop App</h3>
-          <p>Electron UI with local transcripts and model switching.</p>
-        </article>
-        <article class="tile">
-          <h3>OpenAI-Style API</h3>
-          <p>Point existing SDKs to localhost and keep all data on-device.</p>
-        </article>
+          <p>Electron UI with transcripts and model switching.</p>
+        </div>
+        <div class="feature">
+          <span class="feature-num">03</span>
+          <h3>OpenAI-Compatible API</h3>
+          <p>Point any SDK at localhost. Data stays on-device.</p>
+        </div>
       </section>
 
-      <section class="trust reveal">
-        <h2>Built for secure and offline environments</h2>
-        <ul>
-          <li>Zero required cloud calls for inference</li>
-          <li>Local conversation storage under <code>~/.jarvis</code></li>
-          <li>Designed for Linux and Windows workflows</li>
-        </ul>
+      <section class="manifesto">
+        <h2>Built for offline-first environments</h2>
+        <div class="manifesto-points">
+          <div class="point">No cloud calls required</div>
+          <div class="point">Conversations stored at <code>~/.jarvis</code></div>
+          <div class="point">Linux + Windows native</div>
+        </div>
       </section>
     </main>
 
     <footer>
-      <p>Terminal Jarvis • Local-first AI tooling</p>
+      <span>Terminal Jarvis</span>
+      <span class="footer-sep">/</span>
+      <span>local-first AI tooling</span>
     </footer>
 
     <script src="./main.js" type="module"></script>
