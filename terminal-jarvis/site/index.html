@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Terminal Jarvis is a fully local AI assistant with terminal, API, and desktop interfaces. Download for Linux and Windows."
+    />
+    <title>Terminal Jarvis | Fully Local AI Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-layer" aria-hidden="true"></div>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Terminal Jarvis</span>
+      </div>
+      <a class="repo-link" href="https://github.com/Nivetha200111/Jarvis" target="_blank" rel="noreferrer"
+        >GitHub</a
+      >
+    </header>
+
+    <main>
+      <section class="hero reveal">
+        <p class="pill">Privacy-First Local AI</p>
+        <h1>Run your own assistant. No cloud. No telemetry.</h1>
+        <p class="lead">
+          Terminal Jarvis brings local GGUF inference to terminal, desktop, and API workflows.
+          Choose your OS and start in minutes.
+        </p>
+        <div class="hero-actions">
+          <a id="recommended-download" class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases/latest" target="_blank" rel="noreferrer"
+            >Download Recommended Build</a
+          >
+          <a class="btn btn-secondary" href="https://github.com/Nivetha200111/Jarvis/releases/latest" target="_blank" rel="noreferrer"
+            >All Releases</a
+          >
+        </div>
+        <p id="detected-os" class="detected-os">Detecting your platform...</p>
+      </section>
+
+      <section class="downloads reveal">
+        <article class="card card-linux">
+          <h2>Linux</h2>
+          <p>Portable tarball bundle for x64 Linux machines.</p>
+          <div class="card-actions">
+            <a class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases/latest/download/terminal-jarvis-linux-x64.tar.gz" target="_blank" rel="noreferrer"
+              >Download tar.gz</a
+            >
+            <a class="btn btn-tertiary" href="https://github.com/Nivetha200111/Jarvis/releases/latest" target="_blank" rel="noreferrer"
+              >Open release page</a
+            >
+          </div>
+        </article>
+
+        <article class="card card-windows">
+          <h2>Windows</h2>
+          <p>Portable zip bundle for Windows 10+.</p>
+          <div class="card-actions">
+            <a class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases/latest/download/terminal-jarvis-windows-x64.zip" target="_blank" rel="noreferrer"
+              >Download .zip</a
+            >
+            <a class="btn btn-tertiary" href="https://github.com/Nivetha200111/Jarvis/releases/latest" target="_blank" rel="noreferrer"
+              >Open release page</a
+            >
+          </div>
+        </article>
+      </section>
+
+      <section class="grid reveal">
+        <article class="tile">
+          <h3>Terminal REPL</h3>
+          <p>Interactive chat, streaming output, and script-friendly pipe mode.</p>
+        </article>
+        <article class="tile">
+          <h3>Desktop App</h3>
+          <p>Electron UI with local transcripts and model switching.</p>
+        </article>
+        <article class="tile">
+          <h3>OpenAI-Style API</h3>
+          <p>Point existing SDKs to localhost and keep all data on-device.</p>
+        </article>
+      </section>
+
+      <section class="trust reveal">
+        <h2>Built for secure and offline environments</h2>
+        <ul>
+          <li>Zero required cloud calls for inference</li>
+          <li>Local conversation storage under <code>~/.jarvis</code></li>
+          <li>Designed for Linux and Windows workflows</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <p>Terminal Jarvis • Local-first AI tooling</p>
+    </footer>
+
+    <script src="./main.js" type="module"></script>
+  </body>
+</html>

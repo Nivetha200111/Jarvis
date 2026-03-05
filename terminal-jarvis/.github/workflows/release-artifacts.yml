@@ -1,0 +1,90 @@
+name: Release Artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-bundles:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: terminal-jarvis-linux-x64.tar.gz
+            upload_path: terminal-jarvis/terminal-jarvis-linux-x64.tar.gz
+          - os: windows-latest
+            artifact_name: terminal-jarvis-windows-x64.zip
+            upload_path: terminal-jarvis/terminal-jarvis-windows-x64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: terminal-jarvis/package-lock.json
+
+      - name: Install dependencies
+        working-directory: terminal-jarvis
+        run: npm ci
+
+      - name: Build workspace
+        working-directory: terminal-jarvis
+        run: npm run build
+
+      - name: Create Linux bundle
+        if: runner.os == 'Linux'
+        working-directory: terminal-jarvis
+        run: |
+          tar -czf terminal-jarvis-linux-x64.tar.gz -C packages/desktop dist
+
+      - name: Create Windows bundle
+        if: runner.os == 'Windows'
+        working-directory: terminal-jarvis
+        shell: pwsh
+        run: |
+          Compress-Archive -Path packages/desktop/dist/* -DestinationPath terminal-jarvis-windows-x64.zip -Force
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.upload_path }}
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-bundles
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terminal-jarvis-linux-x64.tar.gz
+          path: dist-assets
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terminal-jarvis-windows-x64.zip
+          path: dist-assets
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-assets/terminal-jarvis-linux-x64.tar.gz
+            dist-assets/terminal-jarvis-windows-x64.zip
+          generate_release_notes: true

@@ -1,0 +1,32 @@
+{
+  "name": "@jarvis/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "jarvis": "./bin/jarvis"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "dependencies": {
+    "@jarvis/api": "0.1.0",
+    "@jarvis/core": "0.1.0",
+    "commander": "^14.0.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "test": "vitest run --config ../../vitest.config.ts"
+  }
+}

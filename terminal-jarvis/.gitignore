@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log*
+coverage
+playwright-report
+test-results
+*.tsbuildinfo
+
+# Build outputs
+packages/*/dist
+packages/*/dist-types
+
+# Electron
+packages/desktop/.electron
+
+# Local data
+.jarvis

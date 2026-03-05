@@ -1,0 +1,43 @@
+{
+  "name": "terminal-jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "check-env": "bash ./scripts/check-env.sh",
+    "build": "npm run build --workspace @jarvis/core && npm run build --workspace @jarvis/api && npm run build --workspace @jarvis/cli && npm run build --workspace @jarvis/desktop",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "vitest run --config ./vitest.config.ts",
+    "test:e2e": "playwright test",
+    "dev:cli": "npm run dev --workspace @jarvis/cli",
+    "dev:api": "npm run dev --workspace @jarvis/api",
+    "dev:desktop": "npm run dev --workspace @jarvis/desktop",
+    "dev:site": "node ./scripts/site-dev.mjs",
+    "smoke:cli": "node ./scripts/smoke-cli.mjs",
+    "smoke:api": "node ./scripts/smoke-api.mjs",
+    "smoke:desktop": "node ./scripts/smoke-desktop.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.4",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "esbuild": "^0.27.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
+    "rimraf": "^6.1.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
