@@ -40,6 +40,7 @@ export const App = () => {
   const [status, setStatus] = useState('ready')
   const [busy, setBusy] = useState(false)
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
+  const [queuedPrompts, setQueuedPrompts] = useState<string[]>([])
   const [chatMode, setChatMode] = useState<ChatMode>('fast')
   const [useVaultContext, setUseVaultContext] = useState(true)
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
@@ -70,7 +71,7 @@ export const App = () => {
     statusRef.current = status
   }, [status])
 
-  const canSend = useMemo(() => prompt.trim().length > 0 && !busy, [prompt, busy])
+  const canSend = useMemo(() => prompt.trim().length > 0, [prompt])
   const latestAssistantReply = useMemo(() => {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const current = entries[index]
@@ -319,13 +320,11 @@ export const App = () => {
 
   useEffect(() => () => teardownStream(), [teardownStream])
 
-  const sendMessage = async (): Promise<void> => {
-    if (!canSend) return
-
+  const sendMessage = useCallback(async (text: string): Promise<void> => {
+    if (!text.trim()) {
+      return
+    }
     teardownStream()
-
-    const text = prompt.trim()
-    setPrompt('')
     setBusy(true)
     setStatusSafe('thinking...')
 
@@ -455,11 +454,49 @@ export const App = () => {
           break
       }
     })
-  }
+  }, [
+    attachedPaths,
+    buildPromptWithVaultContext,
+    chatMode,
+    scheduleTokenFlush,
+    selectedModel,
+    setStatusSafe,
+    teardownStream,
+    useVaultContext,
+    vaultStatus.connected,
+    flushImmediately
+  ])
 
   const handleSend = (): void => {
-    void sendMessage()
+    const nextPrompt = prompt.trim()
+    if (!nextPrompt) {
+      return
+    }
+
+    setPrompt('')
+
+    if (busy) {
+      setQueuedPrompts((prev) => [...prev, nextPrompt])
+      return
+    }
+
+    void sendMessage(nextPrompt)
   }
+
+  useEffect(() => {
+    if (busy || queuedPrompts.length === 0) {
+      return
+    }
+
+    const [nextPrompt, ...rest] = queuedPrompts
+    if (!nextPrompt) {
+      setQueuedPrompts(rest)
+      return
+    }
+
+    setQueuedPrompts(rest)
+    void sendMessage(nextPrompt)
+  }, [busy, queuedPrompts, sendMessage])
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -616,6 +653,15 @@ export const App = () => {
             fontSize: '0.7rem',
             color: busy ? '#a855f7' : '#444'
           }}>{status}</span>
+          {queuedPrompts.length > 0 && (
+            <span style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.68rem',
+              color: '#7d7d7d'
+            }}>
+              queue {queuedPrompts.length}
+            </span>
+          )}
         </div>
       </header>
 
@@ -700,7 +746,6 @@ export const App = () => {
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={vaultStatus.connected ? 'Ask Jarvis... (Obsidian vault connected)' : 'Ask Jarvis...'}
-          disabled={busy}
           style={{
             flex: 1,
             border: '1px solid #333',
@@ -729,7 +774,7 @@ export const App = () => {
             alignSelf: 'flex-end'
           }}
         >
-          Run
+          {busy ? 'Queue' : 'Run'}
         </button>
       </div>
     </main>
