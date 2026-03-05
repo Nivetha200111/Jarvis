@@ -19,6 +19,7 @@ export const App = () => {
   const [busy, setBusy] = useState(false)
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
   const [chatMode, setChatMode] = useState<ChatMode>('fast')
+  const [useVaultContext, setUseVaultContext] = useState(true)
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const statusRef = useRef(status)
   const pendingTokenRef = useRef('')
@@ -70,6 +71,48 @@ export const App = () => {
     const segments = path.split(/[\\/]/)
     return segments[segments.length - 1] ?? path
   }, [vaultStatus.vaultPath])
+
+  const buildPromptWithVaultContext = useCallback(async (
+    userPrompt: string
+  ): Promise<{ content: string; matchCount: number }> => {
+    if (!useVaultContext || !vaultStatus.connected) {
+      return { content: userPrompt, matchCount: 0 }
+    }
+
+    try {
+      const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
+      if (matches.length === 0) {
+        return { content: userPrompt, matchCount: 0 }
+      }
+
+      const topMatches = matches.slice(0, 3)
+      const topPath = topMatches[0]?.path
+      let topExcerpt = ''
+
+      if (topPath) {
+        const note = await window.jarvis.obsidianReadNote(topPath)
+        topExcerpt = note.slice(0, 1800)
+      }
+
+      const snippets = topMatches
+        .map((match) => `- ${match.path}:${match.line} ${match.snippet}`)
+        .join('\n')
+
+      const contextBlock = [
+        '[Obsidian context]',
+        'Use this only if relevant to the user request.',
+        snippets,
+        topExcerpt ? `\n[Top note excerpt: ${topPath}]\n${topExcerpt}` : ''
+      ].join('\n')
+
+      return {
+        content: `${userPrompt}\n\n${contextBlock}`,
+        matchCount: topMatches.length
+      }
+    } catch {
+      return { content: userPrompt, matchCount: 0 }
+    }
+  }, [useVaultContext, vaultStatus.connected])
 
   const setStatusSafe = useCallback((next: string): void => {
     if (statusRef.current === next) {
@@ -203,7 +246,7 @@ export const App = () => {
 
   useEffect(() => () => teardownStream(), [teardownStream])
 
-  const handleSend = (): void => {
+  const sendMessage = async (): Promise<void> => {
     if (!canSend) return
 
     teardownStream()
@@ -214,14 +257,32 @@ export const App = () => {
     setStatusSafe('thinking...')
 
     let content = text
+    let injectedMatches = 0
+
+    if (vaultStatus.connected && useVaultContext) {
+      setStatusSafe('retrieving vault context...')
+      const enriched = await buildPromptWithVaultContext(text)
+      content = enriched.content
+      injectedMatches = enriched.matchCount
+    }
+
     const forceAgentMode = attachedPaths.length > 0
     if (attachedPaths.length > 0) {
       const pathList = attachedPaths.map((p) => `  - ${p}`).join('\n')
-      content = `${text}\n\n[Attached files/folders — use read_file or list_directory to access them]\n${pathList}`
+      content = `${content}\n\n[Attached files/folders — use read_file or list_directory to access them]\n${pathList}`
       setAttachedPaths([])
     }
 
-    setEntries((prev) => [...prev, { type: 'user', content }])
+    setEntries((prev) => {
+      const next: ChatEntry[] = [...prev, { type: 'user', content: text }]
+      if (injectedMatches > 0) {
+        next.push({
+          type: 'thinking',
+          content: `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
+        })
+      }
+      return next
+    })
 
     const messages = [{ role: 'user' as const, content }]
     const useAgentMode = chatMode === 'agent' || forceAgentMode
@@ -319,6 +380,10 @@ export const App = () => {
     })
   }
 
+  const handleSend = (): void => {
+    void sendMessage()
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -395,6 +460,23 @@ export const App = () => {
               agent
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setUseVaultContext((prev) => !prev)}
+            disabled={busy || !vaultStatus.connected}
+            style={{
+              padding: '6px 10px',
+              border: '1px solid #333',
+              background: useVaultContext && vaultStatus.connected ? '#1a1a2a' : '#111',
+              color: useVaultContext && vaultStatus.connected ? '#9ca3ff' : '#777',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.7rem',
+              cursor: busy || !vaultStatus.connected ? 'not-allowed' : 'pointer'
+            }}
+            title="Auto-inject relevant Obsidian note context into prompts"
+          >
+            vault ctx {useVaultContext ? 'on' : 'off'}
+          </button>
           <button
             type="button"
             onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
