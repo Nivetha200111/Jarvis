@@ -7,9 +7,14 @@ describe('config-manager', () => {
 
     expect(manager.get('defaultModel')).toBe('mock-llama-3-8b-q4_k_m')
     expect(manager.get('dataDir')).toContain('.jarvis')
+    expect(manager.get('obsidianVaultPath')).toBeNull()
 
     expect(() => {
       manager.set('apiPort', 70000)
     }).toThrowError(/apiPort/)
+
+    expect(() => {
+      manager.set('obsidianVaultPath', '')
+    }).toThrowError(/obsidianVaultPath/)
   })
 })

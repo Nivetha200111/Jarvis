@@ -29,9 +29,12 @@ const iconMap: Record<ChatEntry['type'], string> = {
 
 export const ChatView = ({ entries }: ChatViewProps) => {
   const endRef = useRef<HTMLDivElement>(null)
+  const previousCountRef = useRef(0)
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const behavior = entries.length > previousCountRef.current ? 'smooth' : 'auto'
+    endRef.current?.scrollIntoView({ behavior })
+    previousCountRef.current = entries.length
   }, [entries])
 
   return (
@@ -152,8 +155,8 @@ export const ChatView = ({ entries }: ChatViewProps) => {
       `}</style>
       {entries.length === 0 ? (
         <div className="chat-empty">
-          <div>Ask Jarvis anything. It can run commands, read/write files, and more.</div>
-          <span className="prompt-hint">try: "list files in my home directory" or "create a python hello world script"</span>
+          <div>Ask Jarvis anything. It can run commands, edit files, and work with Obsidian notes.</div>
+          <span className="prompt-hint">try: "connect my vault and summarize notes about roadmap"</span>
         </div>
       ) : (
         entries.map((entry, index) => (

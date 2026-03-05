@@ -1,8 +1,9 @@
 import type { EngineAdapter, ChatMessage, AgentEvent, ToolCall } from '../types/index.js'
 import type { ModelManager } from './model-manager.js'
-import { agentTools, executeTool } from '../tools/index.js'
+import type { ObsidianVaultService } from './obsidian-vault.js'
+import { createAgentTools, executeTool } from '../tools/index.js'
 
-const SYSTEM_PROMPT = `You are Jarvis, an agentic AI assistant running fully locally. You have tools to execute shell commands, read/write files, list directories, and extract zip archives. Use them proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
+const SYSTEM_PROMPT = `You are Jarvis, an agentic AI assistant running fully locally. You have tools to execute shell commands, read/write files, list directories, and extract zip archives. If Obsidian tools are available, use them for vault tasks instead of raw filesystem commands. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
 
 const MAX_ROUNDS = 15
 
@@ -10,7 +11,15 @@ export interface AgentService {
   run(modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent>
 }
 
-export const createAgentService = (engine: EngineAdapter, modelManager: ModelManager): AgentService => {
+export interface CreateAgentServiceOptions {
+  obsidianVault?: ObsidianVaultService
+}
+
+export const createAgentService = (
+  engine: EngineAdapter,
+  modelManager: ModelManager,
+  options: CreateAgentServiceOptions = {}
+): AgentService => {
   const run = async function* (modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent> {
     if (!engine.streamChatWithTools) {
       yield { type: 'error', message: 'Engine does not support tool calling' }
@@ -35,7 +44,7 @@ export const createAgentService = (engine: EngineAdapter, modelManager: ModelMan
       let isFirstTokenInRound = true
 
       try {
-        const tools = toolsSupported ? agentTools : []
+        const tools = toolsSupported ? createAgentTools({ obsidianVault: options.obsidianVault }) : []
         for await (const event of engine.streamChatWithTools(messages, tools)) {
           if (event.type === 'token') {
             if (isFirstTokenInRound && round === 0) {
@@ -89,7 +98,7 @@ export const createAgentService = (engine: EngineAdapter, modelManager: ModelMan
 
         yield { type: 'tool_call', name, arguments: args }
 
-        const result = executeTool(name, args)
+        const result = executeTool(name, args, { obsidianVault: options.obsidianVault })
 
         yield { type: 'tool_result', name, output: result.output, success: result.success }
 

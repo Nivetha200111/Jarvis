@@ -7,6 +7,7 @@ export interface JarvisConfig {
   configPath: string
   defaultModel: string
   apiPort: number
+  obsidianVaultPath: string | null
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -25,6 +26,7 @@ const createDefaults = (): JarvisConfig => {
     configPath: join(dataDir, 'config.toml'),
     defaultModel: 'mock-llama-3-8b-q4_k_m',
     apiPort: 8080,
+    obsidianVaultPath: null,
     logLevel: 'info'
   }
 }
@@ -40,6 +42,10 @@ const validateConfig = (config: JarvisConfig): void => {
 
   if (config.apiPort < 1 || config.apiPort > 65535) {
     throw new Error('Config validation failed: apiPort must be between 1 and 65535')
+  }
+
+  if (config.obsidianVaultPath !== null && config.obsidianVaultPath.trim().length === 0) {
+    throw new Error('Config validation failed: obsidianVaultPath must be null or a non-empty path')
   }
 }
 

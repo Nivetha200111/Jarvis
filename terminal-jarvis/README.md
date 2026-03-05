@@ -16,6 +16,32 @@ This is the runnable baseline monorepo for Terminal Jarvis.
 - Desktop: `npm run dev:desktop`
 - Marketing site: `npm run dev:site` (http://localhost:4173)
 
+## Obsidian Integration
+
+Use the local OpenAI-compatible API with Obsidian plugins that support custom OpenAI endpoints.
+
+- Start API: `JARVIS_ENGINE=ollama npm run dev:api`
+- Base URL in Obsidian plugin: `http://127.0.0.1:8080/v1`
+- API key: any non-empty string
+- Model: one returned by `GET /v1/models`
+
+Full guide: `docs/obsidian-integration.md`
+
+Built-in desktop vault mode is also available:
+- open Desktop: `npm run dev:desktop`
+- click `connect vault` in the header and pick your Obsidian vault folder
+- ask Jarvis to search/read/write notes, or use `save reply` to append the latest response into `Jarvis/YYYY-MM-DD.md`
+
+## Jarvis vs Ollama
+
+- Ollama:
+  - focuses on local model serving and chat primitives
+  - model/runtime management + API endpoints
+- Jarvis:
+  - can use Ollama as its inference backend
+  - adds CLI + desktop app + agent tooling (file/command tools)
+  - adds transcript/config workflows and a unified product UX
+
 ### Use Ollama Models
 
 By default runtime selection is `auto`:

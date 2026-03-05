@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ChatCompletionRequest, ModelInfo, AgentEvent } from '@jarvis/core'
+import type {
+  AgentEvent,
+  ChatCompletionRequest,
+  ModelInfo,
+  ObsidianVaultStatus,
+  ObsidianNoteSummary,
+  ObsidianSearchHit,
+  ObsidianWriteResult
+} from '@jarvis/core'
 import type { ChatSendResponse, StreamEvent, AgentStreamEvent } from '../main/ipc-handlers.js'
 
 export interface PreloadApi {
@@ -17,6 +25,13 @@ export interface PreloadApi {
   openFolder(): Promise<string[]>
   modelList(): Promise<ModelInfo[]>
   healthGet(): Promise<{ status: 'ok'; loadedModel: string | null }>
+  obsidianConnect(vaultPath?: string): Promise<ObsidianVaultStatus>
+  obsidianDisconnect(): Promise<ObsidianVaultStatus>
+  obsidianStatus(): Promise<ObsidianVaultStatus>
+  obsidianListNotes(limit?: number): Promise<ObsidianNoteSummary[]>
+  obsidianSearchNotes(query: string, limit?: number): Promise<ObsidianSearchHit[]>
+  obsidianReadNote(path: string): Promise<string>
+  obsidianWriteNote(path: string, content: string, mode?: 'overwrite' | 'append'): Promise<ObsidianWriteResult>
 }
 
 const api: PreloadApi = {
@@ -68,7 +83,14 @@ const api: PreloadApi = {
   openFiles: () => ipcRenderer.invoke('dialog:open-files'),
   openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
   modelList: () => ipcRenderer.invoke('model:list'),
-  healthGet: () => ipcRenderer.invoke('health:get')
+  healthGet: () => ipcRenderer.invoke('health:get'),
+  obsidianConnect: (vaultPath) => ipcRenderer.invoke('obsidian:connect', { vaultPath }),
+  obsidianDisconnect: () => ipcRenderer.invoke('obsidian:disconnect'),
+  obsidianStatus: () => ipcRenderer.invoke('obsidian:status'),
+  obsidianListNotes: (limit) => ipcRenderer.invoke('obsidian:list', { limit }),
+  obsidianSearchNotes: (query, limit) => ipcRenderer.invoke('obsidian:search', { query, limit }),
+  obsidianReadNote: (path) => ipcRenderer.invoke('obsidian:read', { path }),
+  obsidianWriteNote: (path, content, mode) => ipcRenderer.invoke('obsidian:write', { path, content, mode })
 }
 
 contextBridge.exposeInMainWorld('jarvis', api)

@@ -1,6 +1,12 @@
-import { useEffect, useRef, useMemo, useState } from 'react'
-import type { ModelInfo, AgentEvent } from '@jarvis/core'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { AgentEvent, ModelInfo, ObsidianVaultStatus } from '@jarvis/core'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
+
+const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
+  connected: false,
+  vaultPath: null,
+  noteCount: 0
+}
 
 export const App = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -10,7 +16,10 @@ export const App = () => {
   const [status, setStatus] = useState('ready')
   const [busy, setBusy] = useState(false)
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
+  const pendingTokenRef = useRef('')
+  const rafRef = useRef<number | null>(null)
+  const streamUnsubscribeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     window.jarvis.modelList().then((items) => {
@@ -24,12 +33,143 @@ export const App = () => {
     })
   }, [])
 
+  useEffect(() => {
+    window.jarvis.obsidianStatus().then(setVaultStatus).catch(() => {
+      setVaultStatus(DISCONNECTED_VAULT_STATUS)
+    })
+  }, [])
+
   const canSend = useMemo(() => prompt.trim().length > 0 && !busy, [prompt, busy])
+  const latestAssistantReply = useMemo(() => {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const current = entries[index]
+      if (current?.type === 'assistant') {
+        return current.content
+      }
+    }
+    return ''
+  }, [entries])
+  const canSaveReply = useMemo(
+    () => vaultStatus.connected && latestAssistantReply.trim().length > 0 && !busy,
+    [vaultStatus.connected, latestAssistantReply, busy]
+  )
+  const connectedVaultName = useMemo(() => {
+    const path = vaultStatus.vaultPath
+    if (!path) {
+      return ''
+    }
+
+    const segments = path.split(/[\\/]/)
+    return segments[segments.length - 1] ?? path
+  }, [vaultStatus.vaultPath])
+
+  const flushPendingTokens = useCallback((): void => {
+    if (!pendingTokenRef.current) {
+      return
+    }
+
+    const tokenBuffer = pendingTokenRef.current
+    pendingTokenRef.current = ''
+
+    setEntries((prev) => {
+      const last = prev[prev.length - 1]
+      if (last && last.type === 'assistant') {
+        return [
+          ...prev.slice(0, -1),
+          { type: 'assistant', content: `${last.content}${tokenBuffer}` }
+        ]
+      }
+
+      return [...prev, { type: 'assistant', content: tokenBuffer }]
+    })
+  }, [])
+
+  const scheduleTokenFlush = useCallback((): void => {
+    if (rafRef.current !== null) {
+      return
+    }
+
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      flushPendingTokens()
+    })
+  }, [flushPendingTokens])
+
+  const flushImmediately = useCallback((): void => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    flushPendingTokens()
+  }, [flushPendingTokens])
+
+  const teardownStream = useCallback((): void => {
+    if (streamUnsubscribeRef.current) {
+      streamUnsubscribeRef.current()
+      streamUnsubscribeRef.current = null
+    }
+
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+
+    pendingTokenRef.current = ''
+  }, [])
 
   const handleAttachFiles = async (): Promise<void> => {
     const paths = await window.jarvis.openFiles()
     if (paths.length > 0) {
       setAttachedPaths((prev) => [...prev, ...paths])
+    }
+  }
+
+  const pushErrorEntry = (message: string): void => {
+    setEntries((prev) => [...prev, { type: 'error', content: message }])
+    setStatus('ready')
+  }
+
+  const handleConnectVault = async (): Promise<void> => {
+    try {
+      const nextStatus = await window.jarvis.obsidianConnect()
+      setVaultStatus(nextStatus)
+      if (nextStatus.connected) {
+        setStatus(`vault connected (${nextStatus.noteCount} notes)`)
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushErrorEntry(`Obsidian connect failed: ${message}`)
+    }
+  }
+
+  const handleDisconnectVault = async (): Promise<void> => {
+    try {
+      const nextStatus = await window.jarvis.obsidianDisconnect()
+      setVaultStatus(nextStatus)
+      setStatus('vault disconnected')
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushErrorEntry(`Obsidian disconnect failed: ${message}`)
+    }
+  }
+
+  const handleSaveLastReply = async (): Promise<void> => {
+    if (!canSaveReply) {
+      return
+    }
+
+    const timestamp = new Date().toISOString()
+    const dailyNote = `Jarvis/${timestamp.slice(0, 10)}.md`
+    const payload = `## ${timestamp}\n\n${latestAssistantReply.trim()}\n\n`
+
+    try {
+      const result = await window.jarvis.obsidianWriteNote(dailyNote, payload, 'append')
+      setStatus(`saved ${result.path}`)
+      const nextStatus = await window.jarvis.obsidianStatus()
+      setVaultStatus(nextStatus)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      pushErrorEntry(`Failed to save reply to Obsidian: ${message}`)
     }
   }
 
@@ -44,8 +184,12 @@ export const App = () => {
     setAttachedPaths((prev) => prev.filter((_, i) => i !== index))
   }
 
+  useEffect(() => () => teardownStream(), [teardownStream])
+
   const handleSend = (): void => {
     if (!canSend) return
+
+    teardownStream()
 
     const text = prompt.trim()
     setPrompt('')
@@ -63,23 +207,20 @@ export const App = () => {
 
     const messages = [{ role: 'user' as const, content }]
 
-    window.jarvis.agentChat(selectedModel, messages, (event: AgentEvent) => {
+    streamUnsubscribeRef.current = window.jarvis.agentChat(selectedModel, messages, (event: AgentEvent) => {
       switch (event.type) {
         case 'stream_token':
           setStatus('generating...')
-          setEntries((prev) => {
-            const last = prev[prev.length - 1]
-            if (last && last.type === 'assistant') {
-              return [...prev.slice(0, -1), { type: 'assistant', content: last.content + event.token }]
-            }
-            return [...prev, { type: 'assistant', content: event.token }]
-          })
+          pendingTokenRef.current += event.token
+          scheduleTokenFlush()
           break
         case 'thinking':
+          flushImmediately()
           setStatus('reasoning...')
           setEntries((prev) => [...prev, { type: 'thinking', content: event.content }])
           break
         case 'tool_call':
+          flushImmediately()
           setStatus(`calling ${event.name}...`)
           // If there was a streamed assistant entry before tool calls, reclassify it as thinking
           setEntries((prev) => {
@@ -95,24 +236,31 @@ export const App = () => {
           })
           break
         case 'tool_result':
+          flushImmediately()
           setEntries((prev) => [
             ...prev,
             { type: 'tool_result', content: event.output.slice(0, 2000) + (event.output.length > 2000 ? '\n...(truncated)' : '') }
           ])
           break
         case 'text':
+          flushImmediately()
           setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
           setStatus('ready')
           setBusy(false)
+          teardownStream()
           break
         case 'done':
+          flushImmediately()
           setStatus('ready')
           setBusy(false)
+          teardownStream()
           break
         case 'error':
+          flushImmediately()
           setEntries((prev) => [...prev, { type: 'error', content: event.message }])
           setStatus('ready')
           setBusy(false)
+          teardownStream()
           break
       }
     })
@@ -154,6 +302,47 @@ export const App = () => {
           }}>agent</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            type="button"
+            onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
+            disabled={busy}
+            style={{
+              padding: '6px 10px',
+              border: `1px solid ${vaultStatus.connected ? '#3f3f5f' : '#333'}`,
+              background: vaultStatus.connected ? '#191930' : '#111',
+              color: vaultStatus.connected ? '#9ca3ff' : '#777',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.72rem',
+              cursor: busy ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {vaultStatus.connected ? 'vault on' : 'connect vault'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveLastReply}
+            disabled={!canSaveReply}
+            style={{
+              padding: '6px 10px',
+              border: '1px solid #333',
+              background: canSaveReply ? '#111' : '#0f0f0f',
+              color: canSaveReply ? '#a855f7' : '#555',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.72rem',
+              cursor: canSaveReply ? 'pointer' : 'not-allowed'
+            }}
+          >
+            save reply
+          </button>
+          {vaultStatus.connected && (
+            <span style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.68rem',
+              color: '#6f6fa8'
+            }}>
+              {connectedVaultName} ({vaultStatus.noteCount})
+            </span>
+          )}
           <select
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
@@ -254,12 +443,11 @@ export const App = () => {
           >folder</button>
         </div>
         <textarea
-          ref={textareaRef}
           rows={2}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask Jarvis..."
+          placeholder={vaultStatus.connected ? 'Ask Jarvis... (Obsidian vault connected)' : 'Ask Jarvis...'}
           disabled={busy}
           style={{
             flex: 1,

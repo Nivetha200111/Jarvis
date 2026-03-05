@@ -1,4 +1,12 @@
-import type { AgentEvent, ChatCompletionRequest, TokenChunk } from '@jarvis/core'
+import type {
+  AgentEvent,
+  ChatCompletionRequest,
+  TokenChunk,
+  ObsidianVaultStatus,
+  ObsidianNoteSummary,
+  ObsidianSearchHit,
+  ObsidianWriteResult
+} from '@jarvis/core'
 import type { DesktopServices } from './create-services.js'
 
 export interface StreamEvent {
@@ -65,6 +73,45 @@ export const getHealth = (services: DesktopServices): { status: 'ok'; loadedMode
   status: 'ok',
   loadedModel: services.engine.getLoadedModel()?.id ?? null
 })
+
+export const connectObsidianVault = (
+  services: DesktopServices,
+  vaultPath: string
+): ObsidianVaultStatus => {
+  const status = services.obsidianVaultService.connect(vaultPath)
+  services.configManager.set('obsidianVaultPath', status.vaultPath)
+  return status
+}
+
+export const disconnectObsidianVault = (services: DesktopServices): ObsidianVaultStatus => {
+  services.obsidianVaultService.disconnect()
+  services.configManager.set('obsidianVaultPath', null)
+  return services.obsidianVaultService.status()
+}
+
+export const getObsidianStatus = (services: DesktopServices): ObsidianVaultStatus =>
+  services.obsidianVaultService.status()
+
+export const listObsidianNotes = (
+  services: DesktopServices,
+  limit?: number
+): ObsidianNoteSummary[] => services.obsidianVaultService.listNotes(limit)
+
+export const searchObsidianNotes = (
+  services: DesktopServices,
+  query: string,
+  limit?: number
+): ObsidianSearchHit[] => services.obsidianVaultService.searchNotes(query, limit)
+
+export const readObsidianNote = (services: DesktopServices, notePath: string): string =>
+  services.obsidianVaultService.readNote(notePath)
+
+export const writeObsidianNote = (
+  services: DesktopServices,
+  notePath: string,
+  content: string,
+  mode?: 'overwrite' | 'append'
+): ObsidianWriteResult => services.obsidianVaultService.writeNote(notePath, content, mode)
 
 export const toStreamPayload = (requestId: string, chunk: Omit<StreamEvent, 'requestId'>): StreamEvent => ({
   requestId,

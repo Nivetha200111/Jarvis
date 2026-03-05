@@ -33,9 +33,20 @@ export { createOllamaEngineAdapter, OllamaEngineAdapter } from './engine/ollama-
 export { discoverOllamaModels, parseOllamaListOutput } from './services/ollama-model-discovery.js'
 
 export { createAgentService } from './services/agent-service.js'
-export type { AgentService } from './services/agent-service.js'
+export type { AgentService, CreateAgentServiceOptions } from './services/agent-service.js'
 
-export { agentTools, executeTool } from './tools/index.js'
+export { agentTools, createAgentTools, executeTool } from './tools/index.js'
+export type { ToolExecutionContext } from './tools/index.js'
+
+export { createObsidianVaultService } from './services/obsidian-vault.js'
+export type {
+  ObsidianVaultService,
+  ObsidianVaultStatus,
+  ObsidianNoteSummary,
+  ObsidianSearchHit,
+  ObsidianWriteResult,
+  CreateObsidianVaultServiceOptions
+} from './services/obsidian-vault.js'
 
 export { createRuntimeSelection } from './runtime/create-runtime.js'
 export type { RuntimeSelection, EngineProvider } from './runtime/create-runtime.js'

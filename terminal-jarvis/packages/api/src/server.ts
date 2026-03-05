@@ -19,6 +19,19 @@ export interface ApiServerOptions {
   model?: string
 }
 
+const resolveCorsOrigin = (): boolean | string => {
+  const raw = process.env.JARVIS_CORS_ORIGIN?.trim()
+  if (!raw || raw === '*' || raw.toLowerCase() === 'true') {
+    return true
+  }
+
+  if (raw.toLowerCase() === 'false') {
+    return false
+  }
+
+  return raw
+}
+
 export const createApiServer = (options: ApiServerOptions = {}): FastifyInstance => {
   const app = Fastify({ logger: false })
 
@@ -38,7 +51,7 @@ export const createApiServer = (options: ApiServerOptions = {}): FastifyInstance
     configManager
   })
 
-  app.register(cors, { origin: false })
+  app.register(cors, { origin: resolveCorsOrigin() })
   app.register(rateLimit, {
     max: 120,
     timeWindow: '1 minute'

@@ -1,6 +1,19 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDesktopServices } from '../src/main/create-services.js'
-import { getHealth, listModels, sendChat, streamChat } from '../src/main/ipc-handlers.js'
+import {
+  connectObsidianVault,
+  getHealth,
+  getObsidianStatus,
+  listModels,
+  readObsidianNote,
+  searchObsidianNotes,
+  sendChat,
+  streamChat,
+  writeObsidianNote
+} from '../src/main/ipc-handlers.js'
 
 process.env.JARVIS_ENGINE = 'mock'
 
@@ -42,5 +55,33 @@ describe('desktop IPC handlers', () => {
     const health = getHealth(services)
     expect(health.status).toBe('ok')
     expect(health.loadedModel).toBeTruthy()
+  })
+
+  it('connects to an Obsidian vault and performs note operations', () => {
+    const services = createDesktopServices()
+    const vaultPath = mkdtempSync(join(tmpdir(), 'jarvis-vault-'))
+    writeFileSync(join(vaultPath, 'Daily.md'), '# Daily\n\nKickoff tasks', 'utf8')
+
+    const status = connectObsidianVault(services, vaultPath)
+    expect(status.connected).toBe(true)
+    expect(status.noteCount).toBeGreaterThan(0)
+
+    const search = searchObsidianNotes(services, 'Kickoff', 5)
+    expect(search.length).toBeGreaterThan(0)
+    expect(search[0]?.path).toBe('Daily.md')
+
+    const writeResult = writeObsidianNote(
+      services,
+      'Inbox/meeting.md',
+      '## Notes\n\n- confirm integration\n',
+      'overwrite'
+    )
+    expect(writeResult.path).toBe('Inbox/meeting.md')
+
+    const readResult = readObsidianNote(services, 'Inbox/meeting.md')
+    expect(readResult).toContain('confirm integration')
+
+    const refreshed = getObsidianStatus(services)
+    expect(refreshed.connected).toBe(true)
   })
 })

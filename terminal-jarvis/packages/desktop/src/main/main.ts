@@ -1,7 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { createDesktopServices } from './create-services.js'
-import { getHealth, listModels, sendChat, streamChat, toStreamPayload, runAgent, toAgentStreamPayload } from './ipc-handlers.js'
+import {
+  connectObsidianVault,
+  disconnectObsidianVault,
+  getHealth,
+  getObsidianStatus,
+  listModels,
+  listObsidianNotes,
+  readObsidianNote,
+  runAgent,
+  searchObsidianNotes,
+  sendChat,
+  streamChat,
+  toAgentStreamPayload,
+  toStreamPayload,
+  writeObsidianNote
+} from './ipc-handlers.js'
 
 const currentDir = __dirname
 const services = createDesktopServices()
@@ -26,6 +41,22 @@ const registerIpc = (): void => {
   ipcMain.handle('chat:send', async (_event, request) => sendChat(services, request))
   ipcMain.handle('model:list', async () => listModels(services))
   ipcMain.handle('health:get', async () => getHealth(services))
+  ipcMain.handle('obsidian:status', async () => getObsidianStatus(services))
+  ipcMain.handle('obsidian:disconnect', async () => disconnectObsidianVault(services))
+  ipcMain.handle('obsidian:list', async (_event, payload?: { limit?: number }) =>
+    listObsidianNotes(services, payload?.limit)
+  )
+  ipcMain.handle('obsidian:search', async (_event, payload: { query: string; limit?: number }) =>
+    searchObsidianNotes(services, payload.query, payload.limit)
+  )
+  ipcMain.handle('obsidian:read', async (_event, payload: { path: string }) =>
+    readObsidianNote(services, payload.path)
+  )
+  ipcMain.handle(
+    'obsidian:write',
+    async (_event, payload: { path: string; content: string; mode?: 'overwrite' | 'append' }) =>
+      writeObsidianNote(services, payload.path, payload.content, payload.mode)
+  )
 
   ipcMain.handle('dialog:open-files', async () => {
     const result = await dialog.showOpenDialog({
@@ -41,6 +72,26 @@ const registerIpc = (): void => {
       title: 'Select folder'
     })
     return result.canceled ? [] : result.filePaths
+  })
+
+  ipcMain.handle('obsidian:connect', async (_event, payload?: { vaultPath?: string }) => {
+    let vaultPath = payload?.vaultPath?.trim()
+    if (!vaultPath) {
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Select Obsidian vault'
+      })
+      if (result.canceled || result.filePaths.length === 0) {
+        return getObsidianStatus(services)
+      }
+      const selectedPath = result.filePaths[0]
+      if (!selectedPath) {
+        return getObsidianStatus(services)
+      }
+      vaultPath = selectedPath
+    }
+
+    return connectObsidianVault(services, vaultPath)
   })
 
   ipcMain.on('chat:stream', async (event, payload: { requestId: string; request: { model?: string; messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string }[] } }) => {
