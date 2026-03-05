@@ -44,7 +44,8 @@
         <h1>Your machine.<br/>Your model.<br/>Your data.</h1>
         <p class="lead">
           Terminal Jarvis is a fully local, agentic AI assistant. It runs models through Ollama,
-          executes shell commands, reads and writes files, and works across terminal, desktop, and API.
+          executes shell commands, reads and writes files, includes built-in Obsidian vault tools,
+          and works across terminal, desktop, and API.
           No cloud. No telemetry. Just your hardware.
         </p>
         <div class="hero-actions">
@@ -84,7 +85,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 <span class="c-dim"># Windows &mdash; download from</span>
 <span class="c-dim"># https://ollama.com/download/windows</span></code></pre>
             </div>
-            <p class="step-note">After installing, verify with <code>ollama --version</code></p>
+            <p class="step-note">After installing, verify with <code>ollama --version</code> and keep Ollama running in the background.</p>
           </div>
 
           <div class="step">
@@ -128,12 +129,12 @@ ollama pull gemma2</code></pre>
               <pre><code><span class="c-dim"># Linux</span>
 tar -xzf terminal-jarvis-linux-x64.tar.gz
 cd dist
-npx electron ./main.cjs
+npx --yes electron@40 ./main.cjs
 
 <span class="c-dim"># Windows &mdash; extract zip, then:</span>
-npx electron .\main.cjs</code></pre>
+npx --yes electron@40 .\main.cjs</code></pre>
             </div>
-            <p class="step-note">The desktop app opens with your models ready in the dropdown. Pick one and start chatting.</p>
+            <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then chat. Use <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code> inside your vault.</p>
           </div>
         </div>
       </section>
@@ -151,7 +152,7 @@ npx electron .\main.cjs</code></pre>
           <div class="cap-card">
             <div class="cap-icon">&lt;&gt;</div>
             <h3>File operations</h3>
-            <p>Reads, writes, and lists files. Upload files or folders and Jarvis reads them.</p>
+            <p>Reads, writes, and lists files. In Desktop, it also connects to Obsidian vault notes.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">zip</div>
@@ -220,12 +221,12 @@ npx electron .\main.cjs</code></pre>
         <div class="feature">
           <span class="feature-num">02</span>
           <h3>Desktop App</h3>
-          <p>Electron UI with live streaming and file uploads.</p>
+          <p>Electron UI with live streaming, Obsidian vault connect, and file uploads.</p>
         </div>
         <div class="feature">
           <span class="feature-num">03</span>
           <h3>OpenAI-Compatible API</h3>
-          <p>Point any SDK at localhost. Data stays on-device.</p>
+          <p>Point any SDK at <code>http://127.0.0.1:8080/v1</code>. Data stays on-device.</p>
         </div>
       </section>
 
