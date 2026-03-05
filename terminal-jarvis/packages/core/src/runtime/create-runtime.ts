@@ -67,7 +67,7 @@ export const createRuntimeSelection = (): RuntimeSelection => {
           provider: 'ollama',
           modelManager,
           engine: createOllamaEngineAdapter({ modelManager }),
-          defaultModel: ollamaModels[0]?.id ?? 'llama3'
+          defaultModel: ollamaModels[0]?.id ?? 'qwen2.5'
         }
       }
     } catch {
@@ -81,7 +81,7 @@ export const createRuntimeSelection = (): RuntimeSelection => {
           provider: 'ollama',
           modelManager,
           engine: createOllamaEngineAdapter({ modelManager }),
-          defaultModel: 'llama3'
+          defaultModel: 'glm4'
         }
       }
     }

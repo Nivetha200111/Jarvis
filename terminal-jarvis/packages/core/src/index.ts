@@ -7,7 +7,12 @@ export type {
   ChatCompletionRequest,
   ChatCompletionChunk,
   TranscriptRecord,
-  EngineAdapter
+  EngineAdapter,
+  ToolCall,
+  ToolDefinition,
+  AgentEvent,
+  ChatWithToolsResult,
+  StreamToolEvent
 } from './types/index.js'
 
 export { createModelManager } from './services/model-manager.js'
@@ -26,6 +31,11 @@ export { createMockEngineAdapter, MockEngineAdapter } from './engine/mock-engine
 export { createOllamaEngineAdapter, OllamaEngineAdapter } from './engine/ollama-engine-adapter.js'
 
 export { discoverOllamaModels, parseOllamaListOutput } from './services/ollama-model-discovery.js'
+
+export { createAgentService } from './services/agent-service.js'
+export type { AgentService } from './services/agent-service.js'
+
+export { agentTools, executeTool } from './tools/index.js'
 
 export { createRuntimeSelection } from './runtime/create-runtime.js'
 export type { RuntimeSelection, EngineProvider } from './runtime/create-runtime.js'

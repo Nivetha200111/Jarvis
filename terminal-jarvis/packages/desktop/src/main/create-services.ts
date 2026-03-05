@@ -1,8 +1,10 @@
 import {
+  createAgentService,
   createChatService,
   createConfigManager,
   createRuntimeSelection,
   createTranscriptStore,
+  type AgentService,
   type ChatService,
   type EngineProvider,
   type EngineAdapter,
@@ -11,6 +13,7 @@ import {
 
 export interface DesktopServices {
   chatService: ChatService
+  agentService: AgentService
   modelManager: ModelManager
   engine: EngineAdapter
   provider: EngineProvider
@@ -29,9 +32,11 @@ export const createDesktopServices = (): DesktopServices => {
     transcriptStore,
     configManager
   })
+  const agentService = createAgentService(runtime.engine, modelManager)
 
   return {
     chatService,
+    agentService,
     modelManager,
     engine: runtime.engine,
     provider: runtime.provider

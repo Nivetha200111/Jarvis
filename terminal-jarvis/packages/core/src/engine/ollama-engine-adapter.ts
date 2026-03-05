@@ -1,9 +1,12 @@
 import type {
   ChatMessage,
+  ChatWithToolsResult,
   EngineAdapter,
   GenerationOptions,
   ModelInfo,
+  StreamToolEvent,
   TokenChunk,
+  ToolDefinition,
   UsageStats
 } from '../types/index.js'
 import type { ModelManager } from '../services/model-manager.js'
@@ -18,6 +21,7 @@ interface OllamaStreamEvent {
   message?: {
     role?: string
     content?: string
+    tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }>
   }
   prompt_eval_count?: number
   eval_count?: number
@@ -97,7 +101,7 @@ export class OllamaEngineAdapter implements EngineAdapter {
   ): AsyncGenerator<TokenChunk> {
     if (!this.loadedModel) {
       const defaultModel = this.modelManager.list()[0]
-      this.loadedModel = defaultModel ?? toSyntheticModel('llama3')
+      this.loadedModel = defaultModel ?? toSyntheticModel('qwen2.5')
     }
 
     const requestBody: {
@@ -186,6 +190,127 @@ export class OllamaEngineAdapter implements EngineAdapter {
         }
       }
     }
+  }
+
+  public async chatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult> {
+    if (!this.loadedModel) {
+      const defaultModel = this.modelManager.list()[0]
+      this.loadedModel = defaultModel ?? toSyntheticModel('qwen2.5')
+    }
+
+    const requestBody = {
+      model: this.loadedModel.id,
+      stream: false,
+      messages: messages.map((message) => {
+        const mapped: Record<string, unknown> = {
+          role: toOllamaMessageRole(message.role),
+          content: message.content
+        }
+        if (message.tool_calls) {
+          mapped.tool_calls = message.tool_calls
+        }
+        return mapped
+      }),
+      tools
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
+    }
+
+    const data = (await response.json()) as {
+      message?: { content?: string; tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }> }
+    }
+    const msg = data.message ?? {}
+
+    return {
+      content: msg.content ?? '',
+      toolCalls: msg.tool_calls
+    }
+  }
+
+  public async *streamChatWithTools(messages: ChatMessage[], tools: ToolDefinition[]): AsyncGenerator<StreamToolEvent> {
+    if (!this.loadedModel) {
+      const defaultModel = this.modelManager.list()[0]
+      this.loadedModel = defaultModel ?? toSyntheticModel('qwen2.5')
+    }
+
+    const requestBody = {
+      model: this.loadedModel.id,
+      stream: true,
+      messages: messages.map((message) => {
+        const mapped: Record<string, unknown> = {
+          role: toOllamaMessageRole(message.role),
+          content: message.content
+        }
+        if (message.tool_calls) {
+          mapped.tool_calls = message.tool_calls
+        }
+        return mapped
+      }),
+      ...(tools.length > 0 ? { tools } : {})
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
+    }
+
+    if (!response.body) {
+      throw new Error('Ollama response did not include a stream body')
+    }
+
+    const decoder = new TextDecoder()
+    const reader = response.body.getReader()
+    let buffer = ''
+    let fullContent = ''
+    let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> | undefined
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim()
+        if (!line) continue
+
+        let event: OllamaStreamEvent
+        try {
+          event = JSON.parse(line) as OllamaStreamEvent
+        } catch {
+          continue
+        }
+
+        const content = event.message?.content ?? ''
+        if (content) {
+          fullContent += content
+          yield { type: 'token', token: content }
+        }
+
+        if (event.message?.tool_calls) {
+          toolCalls = event.message.tool_calls
+        }
+      }
+    }
+
+    yield { type: 'complete', content: fullContent, toolCalls }
   }
 }
 

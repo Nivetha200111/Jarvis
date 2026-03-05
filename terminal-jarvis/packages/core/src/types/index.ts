@@ -1,8 +1,29 @@
 export type MessageRole = 'system' | 'user' | 'assistant' | 'tool'
 
+export interface ToolCall {
+  function: {
+    name: string
+    arguments: Record<string, unknown>
+  }
+}
+
+export interface ToolDefinition {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: {
+      type: 'object'
+      properties: Record<string, { type: string; description: string }>
+      required: string[]
+    }
+  }
+}
+
 export interface ChatMessage {
   role: MessageRole
   content: string
+  tool_calls?: ToolCall[]
 }
 
 export interface GenerationOptions {
@@ -68,10 +89,30 @@ export interface TranscriptRecord {
   updatedAt: number
 }
 
+export type AgentEvent =
+  | { type: 'thinking'; content: string }
+  | { type: 'tool_call'; name: string; arguments: Record<string, unknown> }
+  | { type: 'tool_result'; name: string; output: string; success: boolean }
+  | { type: 'text'; content: string }
+  | { type: 'stream_token'; token: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+export interface ChatWithToolsResult {
+  content: string
+  toolCalls?: ToolCall[]
+}
+
+export type StreamToolEvent =
+  | { type: 'token'; token: string }
+  | { type: 'complete'; content: string; toolCalls?: ToolCall[] }
+
 export interface EngineAdapter {
   loadModel(modelId: string): Promise<ModelInfo>
   unloadModel(): Promise<void>
   generate(messages: ChatMessage[], options?: GenerationOptions): AsyncGenerator<TokenChunk>
   getUsage(): UsageStats
   getLoadedModel(): ModelInfo | null
+  chatWithTools?(messages: ChatMessage[], tools: ToolDefinition[]): Promise<ChatWithToolsResult>
+  streamChatWithTools?(messages: ChatMessage[], tools: ToolDefinition[]): AsyncGenerator<StreamToolEvent>
 }

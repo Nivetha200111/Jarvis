@@ -1,4 +1,4 @@
-import type { ChatCompletionRequest, TokenChunk } from '@jarvis/core'
+import type { AgentEvent, ChatCompletionRequest, TokenChunk } from '@jarvis/core'
 import type { DesktopServices } from './create-services.js'
 
 export interface StreamEvent {
@@ -7,6 +7,11 @@ export interface StreamEvent {
   token?: string
   index?: number
   message?: string
+}
+
+export interface AgentStreamEvent {
+  requestId: string
+  event: AgentEvent
 }
 
 export interface ChatSendResponse {
@@ -44,6 +49,16 @@ export const streamChat = async (
   }
 }
 
+export const runAgent = async (
+  services: DesktopServices,
+  payload: { model: string; messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string }> },
+  onEvent: (event: AgentEvent) => void
+): Promise<void> => {
+  for await (const agentEvent of services.agentService.run(payload.model, payload.messages)) {
+    onEvent(agentEvent)
+  }
+}
+
 export const listModels = (services: DesktopServices) => services.modelManager.list()
 
 export const getHealth = (services: DesktopServices): { status: 'ok'; loadedModel: string | null } => ({
@@ -54,6 +69,11 @@ export const getHealth = (services: DesktopServices): { status: 'ok'; loadedMode
 export const toStreamPayload = (requestId: string, chunk: Omit<StreamEvent, 'requestId'>): StreamEvent => ({
   requestId,
   ...chunk
+})
+
+export const toAgentStreamPayload = (requestId: string, event: AgentEvent): AgentStreamEvent => ({
+  requestId,
+  event
 })
 
 export const tokenChunkToStreamEvent = (chunk: TokenChunk): Omit<StreamEvent, 'requestId'> => ({

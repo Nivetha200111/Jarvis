@@ -21,24 +21,31 @@
     <div class="shape shape-1" aria-hidden="true"></div>
     <div class="shape shape-2" aria-hidden="true"></div>
     <div class="shape shape-3" aria-hidden="true"></div>
+    <div class="grid-bg" aria-hidden="true"></div>
 
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">//</span>
         <span>terminal jarvis</span>
       </div>
-      <a class="repo-link" href="https://github.com/Nivetha200111/Jarvis" target="_blank" rel="noreferrer"
-        >src &rarr;</a
-      >
+      <nav class="topnav">
+        <a href="#setup">Setup</a>
+        <a href="#download">Download</a>
+        <a class="repo-link" href="https://github.com/Nivetha200111/Jarvis" target="_blank" rel="noreferrer">src &rarr;</a>
+      </nav>
     </header>
 
     <main>
-      <section class="hero">
-        <div class="hero-label">local inference</div>
+      <section class="hero anim-in">
+        <div class="hero-badge">
+          <span class="badge-dot"></span>
+          local inference &middot; agentic AI
+        </div>
         <h1>Your machine.<br/>Your model.<br/>Your data.</h1>
         <p class="lead">
-          Terminal Jarvis runs GGUF models locally across terminal, desktop, and API.
-          Zero cloud. Zero telemetry. Just inference.
+          Terminal Jarvis is a fully local, agentic AI assistant. It runs models through Ollama,
+          executes shell commands, reads and writes files, and works across terminal, desktop, and API.
+          No cloud. No telemetry. Just your hardware.
         </p>
         <div class="hero-actions">
           <a id="recommended-download" class="btn btn-primary" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
@@ -54,7 +61,123 @@
         </div>
       </section>
 
-      <section class="downloads">
+      <!-- ===== SETUP GUIDE ===== -->
+      <section class="setup anim-in" id="setup">
+        <div class="section-label">Getting Started</div>
+        <h2>Set up in 3 steps</h2>
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">01</div>
+            <h3>Install Ollama</h3>
+            <p>Ollama runs LLMs locally. Install it first &mdash; it takes under a minute.</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-title">terminal</span>
+              </div>
+              <pre><code><span class="c-dim"># Linux / macOS</span>
+curl -fsSL https://ollama.com/install.sh | sh
+
+<span class="c-dim"># Windows &mdash; download from</span>
+<span class="c-dim"># https://ollama.com/download/windows</span></code></pre>
+            </div>
+            <p class="step-note">After installing, verify with <code>ollama --version</code></p>
+          </div>
+
+          <div class="step">
+            <div class="step-num">02</div>
+            <h3>Pull a model</h3>
+            <p>Jarvis works with any Ollama model. For agentic tool-calling, use qwen2.5. For general chat, any model works.</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-title">terminal</span>
+              </div>
+              <pre><code><span class="c-dim"># Recommended &mdash; supports tool calling (agentic)</span>
+ollama pull qwen2.5
+
+<span class="c-dim"># Alternatives</span>
+ollama pull llama3
+ollama pull mistral
+ollama pull gemma2</code></pre>
+            </div>
+            <div class="model-tags">
+              <span class="model-tag tag-agentic">qwen2.5 &mdash; agentic</span>
+              <span class="model-tag">llama3 &mdash; general</span>
+              <span class="model-tag">mistral &mdash; fast</span>
+              <span class="model-tag">gemma2 &mdash; compact</span>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-num">03</div>
+            <h3>Download &amp; launch Jarvis</h3>
+            <p>Grab the build for your OS, extract, and run. Jarvis auto-detects Ollama and your pulled models.</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-dot"></span>
+                <span class="code-title">terminal</span>
+              </div>
+              <pre><code><span class="c-dim"># Linux</span>
+tar -xzf terminal-jarvis-linux-x64.tar.gz
+cd dist
+npx electron ./main.cjs
+
+<span class="c-dim"># Windows &mdash; extract zip, then:</span>
+npx electron .\main.cjs</code></pre>
+            </div>
+            <p class="step-note">The desktop app opens with your models ready in the dropdown. Pick one and start chatting.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== CAPABILITIES ===== -->
+      <section class="capabilities anim-in">
+        <div class="section-label">What it can do</div>
+        <h2>Agentic, local, yours</h2>
+        <div class="cap-grid">
+          <div class="cap-card">
+            <div class="cap-icon">$</div>
+            <h3>Shell execution</h3>
+            <p>Runs commands, installs packages, manages git repos &mdash; directly from chat.</p>
+          </div>
+          <div class="cap-card">
+            <div class="cap-icon">&lt;&gt;</div>
+            <h3>File operations</h3>
+            <p>Reads, writes, and lists files. Upload files or folders and Jarvis reads them.</p>
+          </div>
+          <div class="cap-card">
+            <div class="cap-icon">zip</div>
+            <h3>Archive extraction</h3>
+            <p>Extracts .zip and .tar.gz archives automatically when you need it.</p>
+          </div>
+          <div class="cap-card">
+            <div class="cap-icon">//</div>
+            <h3>Any Ollama model</h3>
+            <p>Tool-capable models get full agent mode. Others work as plain chat. Your choice.</p>
+          </div>
+          <div class="cap-card">
+            <div class="cap-icon">~</div>
+            <h3>Streaming output</h3>
+            <p>Responses stream token-by-token in real time. No waiting for full generation.</p>
+          </div>
+          <div class="cap-card">
+            <div class="cap-icon">0</div>
+            <h3>Zero telemetry</h3>
+            <p>No analytics, no tracking, no cloud calls. Everything stays on your machine.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== DOWNLOADS ===== -->
+      <section class="downloads anim-in" id="download">
         <div class="dl-card">
           <div class="dl-card-head">
             <span class="os-tag">Linux</span>
@@ -87,7 +210,8 @@
         </div>
       </section>
 
-      <section class="features">
+      <!-- ===== FEATURES ROW ===== -->
+      <section class="features anim-in">
         <div class="feature">
           <span class="feature-num">01</span>
           <h3>Terminal REPL</h3>
@@ -96,7 +220,7 @@
         <div class="feature">
           <span class="feature-num">02</span>
           <h3>Desktop App</h3>
-          <p>Electron UI with transcripts and model switching.</p>
+          <p>Electron UI with live streaming and file uploads.</p>
         </div>
         <div class="feature">
           <span class="feature-num">03</span>
@@ -105,12 +229,14 @@
         </div>
       </section>
 
-      <section class="manifesto">
-        <h2>Built for offline-first environments</h2>
+      <section class="manifesto anim-in">
+        <h2>Built for secure and offline environments</h2>
         <div class="manifesto-points">
           <div class="point">No cloud calls required</div>
           <div class="point">Conversations stored at <code>~/.jarvis</code></div>
           <div class="point">Linux + Windows native</div>
+          <div class="point">Agentic tool calling</div>
+          <div class="point">File &amp; folder uploads</div>
         </div>
       </section>
     </main>
@@ -118,7 +244,7 @@
     <footer>
       <span>Terminal Jarvis</span>
       <span class="footer-sep">/</span>
-      <span>local-first AI tooling</span>
+      <span>local-first agentic AI</span>
     </footer>
 
     <script src="./main.js" type="module"></script>

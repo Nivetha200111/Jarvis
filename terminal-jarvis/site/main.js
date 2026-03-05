@@ -134,3 +134,18 @@ const configureDownloadLinks = async () => {
 }
 
 void configureDownloadLinks()
+
+// scroll-triggered entrance animations
+const observer = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible')
+        observer.unobserve(entry.target)
+      }
+    }
+  },
+  { threshold: 0.08 }
+)
+
+document.querySelectorAll('.anim-in').forEach((el) => observer.observe(el))
