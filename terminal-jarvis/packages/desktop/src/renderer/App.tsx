@@ -34,7 +34,7 @@ const createContextExcerpt = (
 
 export const App = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [selectedModel, setSelectedModel] = useState<string>('qwen2.5:latest')
+  const [selectedModel, setSelectedModel] = useState<string>('')
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [prompt, setPrompt] = useState('')
   const [status, setStatus] = useState('ready')
@@ -52,12 +52,12 @@ export const App = () => {
   useEffect(() => {
     window.jarvis.modelList().then((items) => {
       setModels(items)
-      const preferred = items.find((m) => m.id.startsWith('qwen2.5'))
-      if (preferred) {
-        setSelectedModel(preferred.id)
-      } else if (items[0]) {
-        setSelectedModel(items[0].id)
-      }
+      setSelectedModel((current) => {
+        if (current && items.some((model) => model.id === current)) {
+          return current
+        }
+        return items[0]?.id ?? ''
+      })
     })
   }, [])
 
