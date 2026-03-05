@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApiServer } from '../src/server.js'
 
+process.env.JARVIS_ENGINE = 'mock'
+
 describe('API model and health routes', () => {
   const servers: ReturnType<typeof createApiServer>[] = []
 

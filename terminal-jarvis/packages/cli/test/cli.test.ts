@@ -4,6 +4,8 @@ import { createCliContext } from '../src/context.js'
 import { runOneShotChat } from '../src/chat-runner.js'
 import { runPipeMode } from '../src/pipe-mode.js'
 
+process.env.JARVIS_ENGINE = 'mock'
+
 describe('CLI behavior', () => {
   it('produces one-shot chat output', async () => {
     const context = createCliContext()

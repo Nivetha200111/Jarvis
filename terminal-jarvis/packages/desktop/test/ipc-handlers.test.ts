@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { createDesktopServices } from '../src/main/create-services.js'
 import { getHealth, listModels, sendChat, streamChat } from '../src/main/ipc-handlers.js'
 
+process.env.JARVIS_ENGINE = 'mock'
+
 describe('desktop IPC handlers', () => {
   it('streams chat tokens through desktop handler', async () => {
     const services = createDesktopServices()

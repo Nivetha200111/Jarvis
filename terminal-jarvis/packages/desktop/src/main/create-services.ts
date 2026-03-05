@@ -1,10 +1,10 @@
 import {
   createChatService,
   createConfigManager,
-  createMockEngineAdapter,
-  createModelManager,
+  createRuntimeSelection,
   createTranscriptStore,
   type ChatService,
+  type EngineProvider,
   type EngineAdapter,
   type ModelManager
 } from '@jarvis/core'
@@ -13,15 +13,18 @@ export interface DesktopServices {
   chatService: ChatService
   modelManager: ModelManager
   engine: EngineAdapter
+  provider: EngineProvider
 }
 
 export const createDesktopServices = (): DesktopServices => {
-  const modelManager = createModelManager()
-  const configManager = createConfigManager()
+  const runtime = createRuntimeSelection()
+  const modelManager = runtime.modelManager
+  const configManager = createConfigManager({
+    defaultModel: runtime.defaultModel
+  })
   const transcriptStore = createTranscriptStore()
-  const engine = createMockEngineAdapter({ modelManager })
   const chatService = createChatService({
-    engine,
+    engine: runtime.engine,
     modelManager,
     transcriptStore,
     configManager
@@ -30,6 +33,7 @@ export const createDesktopServices = (): DesktopServices => {
   return {
     chatService,
     modelManager,
-    engine
+    engine: runtime.engine,
+    provider: runtime.provider
   }
 }

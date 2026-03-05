@@ -2,6 +2,10 @@ import { spawn } from 'node:child_process'
 
 const child = spawn('node', ['packages/cli/bin/jarvis', 'chat', '--prompt', 'smoke test'], {
   cwd: new URL('..', import.meta.url),
+  env: {
+    ...process.env,
+    JARVIS_ENGINE: 'mock'
+  },
   stdio: ['ignore', 'pipe', 'pipe']
 })
 

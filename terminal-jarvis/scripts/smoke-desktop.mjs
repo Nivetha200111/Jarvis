@@ -9,7 +9,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const desktopMain = resolve(__dirname, '../packages/desktop/dist/main.cjs')
 const env = {
   ...process.env,
-  JARVIS_DESKTOP_SMOKE: '1'
+  JARVIS_DESKTOP_SMOKE: '1',
+  JARVIS_ENGINE: 'mock'
 }
 
 delete env.ELECTRON_RUN_AS_NODE

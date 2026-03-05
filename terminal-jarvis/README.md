@@ -16,6 +16,26 @@ This is the runnable baseline monorepo for Terminal Jarvis.
 - Desktop: `npm run dev:desktop`
 - Marketing site: `npm run dev:site` (http://localhost:4173)
 
+### Use Ollama Models
+
+By default runtime selection is `auto`:
+- if local Ollama models are discovered (`ollama list`), Jarvis uses Ollama
+- otherwise it falls back to the mock engine
+
+You can force provider selection:
+
+```bash
+JARVIS_ENGINE=ollama npm run dev:cli
+JARVIS_ENGINE=mock npm run dev:cli
+```
+
+If Ollama has no local model yet, pull one first:
+
+```bash
+ollama pull llama3.2
+JARVIS_ENGINE=ollama npm run dev:cli
+```
+
 ## Quality Gates
 
 - Lint: `npm run lint`

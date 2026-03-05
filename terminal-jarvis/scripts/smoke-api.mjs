@@ -1,5 +1,7 @@
 import { createApiServer } from '../packages/api/dist/server.js'
 
+process.env.JARVIS_ENGINE = 'mock'
+
 const server = createApiServer()
 const address = await server.listen({ host: '127.0.0.1', port: 0 })
 

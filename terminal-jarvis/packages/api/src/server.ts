@@ -6,8 +6,7 @@ import rateLimit from '@fastify/rate-limit'
 import {
   createChatService,
   createConfigManager,
-  createMockEngineAdapter,
-  createModelManager,
+  createRuntimeSelection,
   createTranscriptStore
 } from '@jarvis/core'
 import { registerChatRoute } from './routes/chat.js'
@@ -23,16 +22,15 @@ export interface ApiServerOptions {
 export const createApiServer = (options: ApiServerOptions = {}): FastifyInstance => {
   const app = Fastify({ logger: false })
 
-  const modelManager = createModelManager()
+  const runtime = createRuntimeSelection()
+  const modelManager = runtime.modelManager
   const configManager = createConfigManager(
-    options.model
-      ? {
-          defaultModel: options.model
-        }
-      : {}
+    {
+      defaultModel: options.model ?? runtime.defaultModel
+    }
   )
   const transcriptStore = createTranscriptStore()
-  const engine = createMockEngineAdapter({ modelManager })
+  const engine = runtime.engine
   const chatService = createChatService({
     engine,
     modelManager,

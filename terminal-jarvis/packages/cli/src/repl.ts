@@ -24,7 +24,7 @@ export const runRepl = async (context: CliContext, options: ReplOptions = {}): P
   let currentModel = options.initialModel ?? context.configManager.get('defaultModel')
   let lastConversationId: string | null = null
 
-  console.log(`Terminal Jarvis REPL (model: ${currentModel})`)
+  console.log(`Terminal Jarvis REPL (${context.provider} engine, model: ${currentModel})`)
   console.log('Type /help for commands')
 
   let multilineBuffer = ''

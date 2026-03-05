@@ -1,10 +1,10 @@
 import {
   createChatService,
   createConfigManager,
-  createMockEngineAdapter,
-  createModelManager,
+  createRuntimeSelection,
   createTranscriptStore,
   type ChatService,
+  type EngineProvider,
   type ConfigManager,
   type ModelManager,
   type TranscriptStore
@@ -15,15 +15,18 @@ export interface CliContext {
   modelManager: ModelManager
   configManager: ConfigManager
   transcriptStore: TranscriptStore
+  provider: EngineProvider
 }
 
 export const createCliContext = (): CliContext => {
-  const modelManager = createModelManager()
-  const configManager = createConfigManager()
+  const runtime = createRuntimeSelection()
+  const modelManager = runtime.modelManager
+  const configManager = createConfigManager({
+    defaultModel: runtime.defaultModel
+  })
   const transcriptStore = createTranscriptStore()
-  const engine = createMockEngineAdapter({ modelManager })
   const chatService = createChatService({
-    engine,
+    engine: runtime.engine,
     modelManager,
     transcriptStore,
     configManager
@@ -33,6 +36,7 @@ export const createCliContext = (): CliContext => {
     chatService,
     modelManager,
     configManager,
-    transcriptStore
+    transcriptStore,
+    provider: runtime.provider
   }
 }

@@ -26,12 +26,32 @@ export interface ModelManager {
   registerAlias(alias: string, modelId: string): void
 }
 
-export const createModelManager = (): ModelManager => {
-  const models = new Map<string, ModelInfo>(seededModels.map((model) => [model.id, model]))
-  const aliases = new Map<string, string>([
-    ['llama3', 'mock-llama-3-8b-q4_k_m'],
-    ['mistral', 'mock-mistral-7b-q5_k_m']
-  ])
+export interface CreateModelManagerOptions {
+  seedModels?: ModelInfo[]
+  aliases?: Record<string, string>
+  allowUnknownResolve?: boolean
+}
+
+const defaultAliases: Record<string, string> = {
+  llama3: 'mock-llama-3-8b-q4_k_m',
+  mistral: 'mock-mistral-7b-q5_k_m'
+}
+
+const toSyntheticModel = (id: string): ModelInfo => ({
+  id,
+  name: id,
+  path: `dynamic://${id}`,
+  sizeBytes: 0,
+  quantization: 'unknown',
+  contextLength: 0
+})
+
+export const createModelManager = (options: CreateModelManagerOptions = {}): ModelManager => {
+  const initialModels = options.seedModels ?? seededModels
+  const models = new Map<string, ModelInfo>(initialModels.map((model) => [model.id, model]))
+  const aliases = new Map<string, string>(
+    Object.entries(options.aliases ?? defaultAliases)
+  )
 
   const list = (): ModelInfo[] => Array.from(models.values())
 
@@ -49,6 +69,10 @@ export const createModelManager = (): ModelManager => {
 
     const aliasId = aliases.get(input)
     if (!aliasId) {
+      if (options.allowUnknownResolve) {
+        return toSyntheticModel(input)
+      }
+
       return undefined
     }
 
