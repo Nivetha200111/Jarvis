@@ -7,6 +7,7 @@ export interface ChatEntry {
 
 export interface ChatViewProps {
   entries: ChatEntry[]
+  isStreaming?: boolean
 }
 
 const labelMap: Record<ChatEntry['type'], string> = {
@@ -27,18 +28,18 @@ const iconMap: Record<ChatEntry['type'], string> = {
   error: '!'
 }
 
-export const ChatView = ({ entries }: ChatViewProps) => {
+export const ChatView = ({ entries, isStreaming = false }: ChatViewProps) => {
   const endRef = useRef<HTMLDivElement>(null)
   const previousCountRef = useRef(0)
 
   useEffect(() => {
-    const behavior = entries.length > previousCountRef.current ? 'smooth' : 'auto'
+    const behavior = isStreaming ? 'auto' : entries.length > previousCountRef.current ? 'smooth' : 'auto'
     endRef.current?.scrollIntoView({ behavior })
     previousCountRef.current = entries.length
-  }, [entries])
+  }, [entries, isStreaming])
 
   return (
-    <section className="chat-container">
+    <section className={`chat-container${isStreaming ? ' streaming' : ''}`}>
       <style>{`
         .chat-container {
           min-height: 400px;
@@ -53,6 +54,14 @@ export const ChatView = ({ entries }: ChatViewProps) => {
         .chat-container::-webkit-scrollbar { width: 4px; }
         .chat-container::-webkit-scrollbar-track { background: #0a0a0a; }
         .chat-container::-webkit-scrollbar-thumb { background: #333; }
+        .chat-container.streaming {
+          scroll-behavior: auto;
+        }
+        .chat-container.streaming .chat-entry,
+        .chat-container.streaming .entry-tool_call,
+        .chat-container.streaming .entry-error {
+          animation: none !important;
+        }
         .chat-empty {
           color: #444;
           padding: 3rem 2rem;

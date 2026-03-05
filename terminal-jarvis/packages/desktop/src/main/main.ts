@@ -21,6 +21,15 @@ import {
 const currentDir = __dirname
 const services = createDesktopServices()
 
+if (process.platform === 'linux') {
+  const ozonePlatform = process.env.JARVIS_OZONE_PLATFORM?.trim()
+  if (ozonePlatform) {
+    app.commandLine.appendSwitch('ozone-platform', ozonePlatform)
+    app.commandLine.appendSwitch('ozone-platform-hint', ozonePlatform)
+  }
+  app.commandLine.appendSwitch('disable-features', 'Vulkan')
+}
+
 const createWindow = async (): Promise<BrowserWindow> => {
   const window = new BrowserWindow({
     width: 1100,

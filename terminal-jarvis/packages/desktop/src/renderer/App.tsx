@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentEvent, ModelInfo, ObsidianVaultStatus } from '@jarvis/core'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
 
+type ChatMode = 'fast' | 'agent'
+
 const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
   connected: false,
   vaultPath: null,
@@ -16,7 +18,9 @@ export const App = () => {
   const [status, setStatus] = useState('ready')
   const [busy, setBusy] = useState(false)
   const [attachedPaths, setAttachedPaths] = useState<string[]>([])
+  const [chatMode, setChatMode] = useState<ChatMode>('fast')
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
+  const statusRef = useRef(status)
   const pendingTokenRef = useRef('')
   const rafRef = useRef<number | null>(null)
   const streamUnsubscribeRef = useRef<(() => void) | null>(null)
@@ -38,6 +42,10 @@ export const App = () => {
       setVaultStatus(DISCONNECTED_VAULT_STATUS)
     })
   }, [])
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
 
   const canSend = useMemo(() => prompt.trim().length > 0 && !busy, [prompt, busy])
   const latestAssistantReply = useMemo(() => {
@@ -62,6 +70,15 @@ export const App = () => {
     const segments = path.split(/[\\/]/)
     return segments[segments.length - 1] ?? path
   }, [vaultStatus.vaultPath])
+
+  const setStatusSafe = useCallback((next: string): void => {
+    if (statusRef.current === next) {
+      return
+    }
+
+    statusRef.current = next
+    setStatus(next)
+  }, [])
 
   const flushPendingTokens = useCallback((): void => {
     if (!pendingTokenRef.current) {
@@ -126,7 +143,7 @@ export const App = () => {
 
   const pushErrorEntry = (message: string): void => {
     setEntries((prev) => [...prev, { type: 'error', content: message }])
-    setStatus('ready')
+    setStatusSafe('ready')
   }
 
   const handleConnectVault = async (): Promise<void> => {
@@ -134,7 +151,7 @@ export const App = () => {
       const nextStatus = await window.jarvis.obsidianConnect()
       setVaultStatus(nextStatus)
       if (nextStatus.connected) {
-        setStatus(`vault connected (${nextStatus.noteCount} notes)`)
+        setStatusSafe(`vault connected (${nextStatus.noteCount} notes)`)
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -146,7 +163,7 @@ export const App = () => {
     try {
       const nextStatus = await window.jarvis.obsidianDisconnect()
       setVaultStatus(nextStatus)
-      setStatus('vault disconnected')
+      setStatusSafe('vault disconnected')
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       pushErrorEntry(`Obsidian disconnect failed: ${message}`)
@@ -164,7 +181,7 @@ export const App = () => {
 
     try {
       const result = await window.jarvis.obsidianWriteNote(dailyNote, payload, 'append')
-      setStatus(`saved ${result.path}`)
+      setStatusSafe(`saved ${result.path}`)
       const nextStatus = await window.jarvis.obsidianStatus()
       setVaultStatus(nextStatus)
     } catch (error: unknown) {
@@ -194,9 +211,10 @@ export const App = () => {
     const text = prompt.trim()
     setPrompt('')
     setBusy(true)
-    setStatus('thinking...')
+    setStatusSafe('thinking...')
 
     let content = text
+    const forceAgentMode = attachedPaths.length > 0
     if (attachedPaths.length > 0) {
       const pathList = attachedPaths.map((p) => `  - ${p}`).join('\n')
       content = `${text}\n\n[Attached files/folders — use read_file or list_directory to access them]\n${pathList}`
@@ -206,22 +224,57 @@ export const App = () => {
     setEntries((prev) => [...prev, { type: 'user', content }])
 
     const messages = [{ role: 'user' as const, content }]
+    const useAgentMode = chatMode === 'agent' || forceAgentMode
+
+    if (!useAgentMode) {
+      streamUnsubscribeRef.current = window.jarvis.chatStream(
+        {
+          model: selectedModel,
+          messages,
+          stream: true,
+          max_tokens: 256
+        },
+        (event) => {
+          switch (event.type) {
+            case 'token':
+              setStatusSafe('generating...')
+              pendingTokenRef.current += event.token ?? ''
+              scheduleTokenFlush()
+              break
+            case 'done':
+              flushImmediately()
+              setStatusSafe('ready')
+              setBusy(false)
+              teardownStream()
+              break
+            case 'error':
+              flushImmediately()
+              setEntries((prev) => [...prev, { type: 'error', content: event.message ?? 'Stream failed' }])
+              setStatusSafe('ready')
+              setBusy(false)
+              teardownStream()
+              break
+          }
+        }
+      )
+      return
+    }
 
     streamUnsubscribeRef.current = window.jarvis.agentChat(selectedModel, messages, (event: AgentEvent) => {
       switch (event.type) {
         case 'stream_token':
-          setStatus('generating...')
+          setStatusSafe('generating...')
           pendingTokenRef.current += event.token
           scheduleTokenFlush()
           break
         case 'thinking':
           flushImmediately()
-          setStatus('reasoning...')
+          setStatusSafe('reasoning...')
           setEntries((prev) => [...prev, { type: 'thinking', content: event.content }])
           break
         case 'tool_call':
           flushImmediately()
-          setStatus(`calling ${event.name}...`)
+          setStatusSafe(`calling ${event.name}...`)
           // If there was a streamed assistant entry before tool calls, reclassify it as thinking
           setEntries((prev) => {
             const last = prev[prev.length - 1]
@@ -245,20 +298,20 @@ export const App = () => {
         case 'text':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
-          setStatus('ready')
+          setStatusSafe('ready')
           setBusy(false)
           teardownStream()
           break
         case 'done':
           flushImmediately()
-          setStatus('ready')
+          setStatusSafe('ready')
           setBusy(false)
           teardownStream()
           break
         case 'error':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'error', content: event.message }])
-          setStatus('ready')
+          setStatusSafe('ready')
           setBusy(false)
           teardownStream()
           break
@@ -302,6 +355,46 @@ export const App = () => {
           }}>agent</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div
+            style={{
+              display: 'inline-flex',
+              border: '1px solid #333',
+              background: '#111'
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setChatMode('fast')}
+              disabled={busy}
+              style={{
+                padding: '6px 9px',
+                border: 'none',
+                background: chatMode === 'fast' ? '#2a2a2a' : 'transparent',
+                color: chatMode === 'fast' ? '#d8d8d8' : '#6b6b6b',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '0.7rem',
+                cursor: busy ? 'not-allowed' : 'pointer'
+              }}
+            >
+              fast
+            </button>
+            <button
+              type="button"
+              onClick={() => setChatMode('agent')}
+              disabled={busy}
+              style={{
+                padding: '6px 9px',
+                border: 'none',
+                background: chatMode === 'agent' ? '#2a2a2a' : 'transparent',
+                color: chatMode === 'agent' ? '#d8d8d8' : '#6b6b6b',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '0.7rem',
+                cursor: busy ? 'not-allowed' : 'pointer'
+              }}
+            >
+              agent
+            </button>
+          </div>
           <button
             type="button"
             onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
@@ -368,7 +461,7 @@ export const App = () => {
       </header>
 
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        <ChatView entries={entries} />
+        <ChatView entries={entries} isStreaming={busy} />
       </div>
 
       {attachedPaths.length > 0 && (
