@@ -139,7 +139,7 @@ export const App = () => {
 
         const contextBlock = [
           '[Obsidian context]',
-          'No direct lexical match found, so using excerpts across vault notes.',
+          'Using broad vault excerpts for context coverage.',
           collected
         ].join('\n')
 
@@ -353,7 +353,7 @@ export const App = () => {
         next.push({
           type: 'thinking',
           content: fallbackContextUsed
-            ? 'No direct match found; injected broad vault excerpts for context.'
+            ? 'Loaded broad vault context from recent notes.'
             : `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
         })
       }
