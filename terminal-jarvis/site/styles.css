@@ -276,6 +276,27 @@ main {
   gap: 1rem;
 }
 
+.hero-demo {
+  margin-top: 1.7rem;
+  border: 1px solid var(--border);
+  background: #0d0d0d;
+  padding: 0.5rem;
+}
+
+.hero-demo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border-light);
+}
+
+.hero-demo-note {
+  margin-top: 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-xdim);
+}
+
 .meta-tag {
   font-family: var(--mono);
   font-size: 0.72rem;
