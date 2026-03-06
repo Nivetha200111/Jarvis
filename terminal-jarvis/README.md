@@ -9,6 +9,7 @@ Terminal Jarvis is designed for people who want local control, local data, and p
 - Fully local execution through Ollama-compatible models
 - Desktop + CLI + API surfaces in one codebase
 - Built-in Obsidian vault integration
+- Local calendar with optional Google one-click import
 - Local RAG retrieval from indexed files/notes
 - Optional live screen vision mode (vision-capable Ollama models)
 - Streaming output with queued prompts
@@ -66,6 +67,21 @@ Two ways to integrate with Obsidian:
 
 Detailed guide: `docs/obsidian-integration.md`
 Release checklist: `docs/ship-readiness.md`
+
+## Calendar Assistant Context
+
+- Desktop includes a local schedule store at `~/.jarvis/calendar/events.json`
+- Add events directly from the `+ Event` button
+- Use `Google Sync` to import from Google Calendar into local storage
+- Jarvis can use schedule context in chat (`Schedule On`)
+
+To enable Google import, set:
+
+```bash
+export JARVIS_GOOGLE_CLIENT_ID="your-desktop-oauth-client-id.apps.googleusercontent.com"
+```
+
+Then restart desktop and click `Google Sync` once.
 
 ## Security Defaults
 

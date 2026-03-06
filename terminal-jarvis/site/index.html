@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Terminal Jarvis is a fully local AI assistant with terminal, API, and desktop interfaces. Download for Linux and Windows."
+      content="Terminal Jarvis is a fully local AI assistant with terminal, API, and desktop interfaces, including built-in Obsidian + local calendar context with one-click Google sync."
     />
     <title>Terminal Jarvis | Fully Local AI Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -45,7 +45,8 @@
         <p class="lead">
           Terminal Jarvis is a fully local, agentic AI assistant. It runs models through Ollama,
           executes shell and system tools, includes built-in Obsidian vault integration with local RAG retrieval,
-          and works across terminal, desktop, and API with streaming + queued prompts.
+          and now includes local calendar context with one-click Google schedule import in Desktop.
+          It works across terminal, desktop, and API with streaming + queued prompts.
           No cloud. No telemetry. Just your hardware.
         </p>
         <div class="hero-actions">
@@ -132,8 +133,9 @@ cd terminal-jarvis-linux-x64
 <span class="c-dim"># Windows &mdash; extract zip, then run:</span>
 run-jarvis.bat</code></pre>
             </div>
-            <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then chat. Use <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code> inside your vault.</p>
-            <p class="step-note">Jarvis automatically indexes connected vault notes for local retrieval and can queue your next prompt while a response is still generating.</p>
+            <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then click <code>Google Sync</code> once to import your schedule into local calendar context.</p>
+            <p class="step-note">Use <code>Schedule On</code> to include upcoming events in assistant context. Use <code>+ Event</code> for local-only events and <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code>.</p>
+            <p class="step-note">For Google import, set <code>JARVIS_GOOGLE_CLIENT_ID</code> once, restart the app, then click <code>Google Sync</code>.</p>
           </div>
         </div>
       </section>
@@ -160,8 +162,8 @@ run-jarvis.bat</code></pre>
           </div>
           <div class="cap-card">
             <div class="cap-icon">//</div>
-            <h3>Fast model defaults</h3>
-            <p>Auto-detects local Ollama models, prefers fast chat-capable options by default, and keeps embedding/rerank models out of chat selection.</p>
+            <h3>Calendar assistant context</h3>
+            <p>Built-in local calendar with one-click Google import. Upcoming schedule items are available to Jarvis for better planning and reminders.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">~</div>
@@ -220,7 +222,7 @@ run-jarvis.bat</code></pre>
         <div class="feature">
           <span class="feature-num">02</span>
           <h3>Desktop App</h3>
-          <p>Electron UI with fast/agent modes, Obsidian + RAG, screen tools, queued prompts, and PiP mode.</p>
+          <p>Electron UI with fast/agent modes, Obsidian + RAG, local calendar + Google sync, screen tools, queued prompts, and PiP mode.</p>
         </div>
         <div class="feature">
           <span class="feature-num">03</span>
@@ -237,6 +239,7 @@ run-jarvis.bat</code></pre>
           <div class="point">Linux + Windows releases</div>
           <div class="point">Agentic + local RAG retrieval</div>
           <div class="point">Vault context + file/folder uploads</div>
+          <div class="point">Local calendar + one-click Google sync</div>
         </div>
       </section>
     </main>

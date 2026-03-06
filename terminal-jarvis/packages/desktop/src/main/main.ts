@@ -1,11 +1,18 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Notification, screen, shell, desktopCapturer, Tray, Menu, nativeImage } from 'electron'
+import { createHash, randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { homedir, hostname, userInfo, cpus, totalmem, freemem, platform, release } from 'node:os'
 import { execSync } from 'node:child_process'
-import type { SystemToolCallbacks } from '@jarvis/core'
+import type { AddressInfo } from 'node:net'
+import type { CalendarEventInput, SystemToolCallbacks } from '@jarvis/core'
 import { createDesktopServices } from './create-services.js'
 import {
+  calendarAddEvent,
+  calendarListEvents,
+  calendarStats,
+  calendarUpcomingEvents,
   connectObsidianVault,
   disconnectObsidianVault,
   getHealth,
@@ -46,6 +53,398 @@ const PIP_WIDTH = 420
 const PIP_HEIGHT = 520
 const FULL_WIDTH = 1100
 const FULL_HEIGHT = 760
+const GOOGLE_AUTH_TIMEOUT_MS = 180_000
+const GOOGLE_TOKEN_PATH = join(homedir(), '.jarvis', 'calendar', 'google-oauth.json')
+const GOOGLE_SYNC_LOOKBACK_DAYS = 7
+const GOOGLE_SYNC_LOOKAHEAD_DAYS = 365
+const MS_PER_DAY = 86_400_000
+
+interface GoogleTokenState {
+  accessToken: string
+  refreshToken?: string
+  expiresAt: number
+}
+
+interface GoogleCalendarImportResult {
+  imported: number
+  total: number
+  warning?: string
+}
+
+interface GoogleCalendarDateTime {
+  dateTime?: string
+  date?: string
+}
+
+interface GoogleCalendarApiEvent {
+  id?: string
+  status?: string
+  summary?: string
+  description?: string
+  location?: string
+  start?: GoogleCalendarDateTime
+  end?: GoogleCalendarDateTime
+  updated?: string
+}
+
+interface GoogleCalendarApiResponse {
+  items?: GoogleCalendarApiEvent[]
+  nextPageToken?: string
+}
+
+const toBase64Url = (value: Buffer): string =>
+  value
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')
+
+const createPkcePair = (): { verifier: string; challenge: string } => {
+  const verifier = toBase64Url(randomBytes(48))
+  const challenge = toBase64Url(createHash('sha256').update(verifier).digest())
+  return { verifier, challenge }
+}
+
+const loadGoogleTokenState = (): GoogleTokenState | null => {
+  if (!existsSync(GOOGLE_TOKEN_PATH)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(GOOGLE_TOKEN_PATH, 'utf8')) as GoogleTokenState
+    if (!parsed.accessToken || !Number.isFinite(parsed.expiresAt)) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+const saveGoogleTokenState = (state: GoogleTokenState): void => {
+  const dir = join(homedir(), '.jarvis', 'calendar')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(GOOGLE_TOKEN_PATH, JSON.stringify(state), 'utf8')
+}
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const raced = await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+          reject(new Error(`Timed out after ${timeoutMs}ms`))
+        })
+      })
+    ])
+    return raced as T
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+const fetchGoogleTokens = async (
+  body: URLSearchParams
+): Promise<{ access_token: string; expires_in: number; refresh_token?: string }> => {
+  const response = await withTimeout(
+    fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    }),
+    GOOGLE_AUTH_TIMEOUT_MS
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Google OAuth token exchange failed (${response.status}): ${errorText}`)
+  }
+
+  return response.json() as Promise<{ access_token: string; expires_in: number; refresh_token?: string }>
+}
+
+const exchangeGoogleAuthCode = async (
+  clientId: string,
+  code: string,
+  codeVerifier: string,
+  redirectUri: string
+): Promise<GoogleTokenState> => {
+  const body = new URLSearchParams({
+    client_id: clientId,
+    grant_type: 'authorization_code',
+    code,
+    code_verifier: codeVerifier,
+    redirect_uri: redirectUri
+  })
+
+  const tokenResponse = await fetchGoogleTokens(body)
+  return {
+    accessToken: tokenResponse.access_token,
+    refreshToken: tokenResponse.refresh_token,
+    expiresAt: Date.now() + Math.max(1, tokenResponse.expires_in - 60) * 1000
+  }
+}
+
+const refreshGoogleAccessToken = async (
+  clientId: string,
+  refreshToken: string
+): Promise<GoogleTokenState> => {
+  const body = new URLSearchParams({
+    client_id: clientId,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken
+  })
+  const tokenResponse = await fetchGoogleTokens(body)
+  return {
+    accessToken: tokenResponse.access_token,
+    refreshToken,
+    expiresAt: Date.now() + Math.max(1, tokenResponse.expires_in - 60) * 1000
+  }
+}
+
+const runGoogleOAuthFlow = async (clientId: string): Promise<GoogleTokenState> => {
+  const { verifier, challenge } = createPkcePair()
+  const state = toBase64Url(randomBytes(24))
+  const server = createServer()
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => resolve())
+    })
+
+    const { port } = server.address() as AddressInfo
+    const redirectUri = `http://127.0.0.1:${port}/oauth2callback`
+
+    const codePromise = new Promise<string>((resolve, reject) => {
+      server.on('request', (req, res) => {
+        const parsed = new URL(req.url ?? '/', redirectUri)
+        if (parsed.pathname !== '/oauth2callback') {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('Not found')
+          return
+        }
+
+        const returnedState = parsed.searchParams.get('state')
+        const code = parsed.searchParams.get('code')
+        const authError = parsed.searchParams.get('error')
+
+        if (authError) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' })
+          res.end('Google authorization failed. You can close this tab.')
+          reject(new Error(`Google authorization failed: ${authError}`))
+          return
+        }
+
+        if (!returnedState || returnedState !== state || !code) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' })
+          res.end('Invalid OAuth callback state. You can close this tab.')
+          return
+        }
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end('<html><body><h3>Google Calendar connected.</h3><p>You can close this tab and return to Jarvis.</p></body></html>')
+        resolve(code)
+      })
+    })
+
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+    authUrl.searchParams.set('client_id', clientId)
+    authUrl.searchParams.set('redirect_uri', redirectUri)
+    authUrl.searchParams.set('response_type', 'code')
+    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/calendar.readonly')
+    authUrl.searchParams.set('access_type', 'offline')
+    authUrl.searchParams.set('prompt', 'consent')
+    authUrl.searchParams.set('state', state)
+    authUrl.searchParams.set('code_challenge', challenge)
+    authUrl.searchParams.set('code_challenge_method', 'S256')
+
+    await shell.openExternal(authUrl.toString())
+
+    const code = await Promise.race([
+      codePromise,
+      new Promise<string>((_, reject) => {
+        setTimeout(() => reject(new Error('Google OAuth authorization timed out.')), GOOGLE_AUTH_TIMEOUT_MS)
+      })
+    ])
+
+    const tokenState = await exchangeGoogleAuthCode(clientId, code, verifier, redirectUri)
+    saveGoogleTokenState(tokenState)
+    return tokenState
+  } finally {
+    server.close()
+  }
+}
+
+const isGoogleTokenUsable = (state: GoogleTokenState): boolean =>
+  state.expiresAt > Date.now() + 30_000
+
+const ensureGoogleTokenState = async (clientId: string): Promise<GoogleTokenState> => {
+  const existing = loadGoogleTokenState()
+  if (existing && isGoogleTokenUsable(existing)) {
+    return existing
+  }
+
+  if (existing?.refreshToken) {
+    try {
+      const refreshed = await refreshGoogleAccessToken(clientId, existing.refreshToken)
+      saveGoogleTokenState(refreshed)
+      return refreshed
+    } catch {
+      // Refresh can fail when token was revoked; fall through to interactive auth.
+    }
+  }
+
+  const authorized = await runGoogleOAuthFlow(clientId)
+  saveGoogleTokenState(authorized)
+  return authorized
+}
+
+const parseGoogleCalendarTime = (
+  value: GoogleCalendarDateTime | undefined
+): { timestamp: number; allDay: boolean } | null => {
+  if (!value) {
+    return null
+  }
+
+  if (value.dateTime) {
+    const timestamp = Date.parse(value.dateTime)
+    if (!Number.isNaN(timestamp)) {
+      return { timestamp, allDay: false }
+    }
+  }
+
+  if (value.date) {
+    const timestamp = Date.parse(`${value.date}T00:00:00`)
+    if (!Number.isNaN(timestamp)) {
+      return { timestamp, allDay: true }
+    }
+  }
+
+  return null
+}
+
+const toGoogleCalendarInput = (event: GoogleCalendarApiEvent): CalendarEventInput | null => {
+  if (!event.id || event.status === 'cancelled') {
+    return null
+  }
+
+  const start = parseGoogleCalendarTime(event.start)
+  if (!start) {
+    return null
+  }
+
+  const end = parseGoogleCalendarTime(event.end)
+  const fallbackEnd = start.timestamp + (start.allDay ? MS_PER_DAY : 3_600_000)
+  const parsedEnd = end?.timestamp ?? fallbackEnd
+  const endTime = parsedEnd > start.timestamp ? parsedEnd : fallbackEnd
+
+  return {
+    id: `google:${event.id}`,
+    title: event.summary?.trim() || '(Untitled event)',
+    description: event.description?.trim() || '',
+    location: event.location?.trim() || '',
+    startTime: start.timestamp,
+    endTime,
+    allDay: start.allDay,
+    source: 'google',
+    updatedAt: event.updated ? Date.parse(event.updated) || Date.now() : Date.now()
+  }
+}
+
+const fetchGoogleCalendarEvents = async (
+  accessToken: string,
+  timeMinIso: string,
+  timeMaxIso: string
+): Promise<GoogleCalendarApiEvent[]> => {
+  const events: GoogleCalendarApiEvent[] = []
+  let pageToken: string | undefined
+
+  do {
+    const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events')
+    url.searchParams.set('singleEvents', 'true')
+    url.searchParams.set('orderBy', 'startTime')
+    url.searchParams.set('showDeleted', 'false')
+    url.searchParams.set('maxResults', '2500')
+    url.searchParams.set('timeMin', timeMinIso)
+    url.searchParams.set('timeMax', timeMaxIso)
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken)
+    }
+
+    const response = await withTimeout(
+      fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      }),
+      GOOGLE_AUTH_TIMEOUT_MS
+    )
+
+    if (response.status === 401) {
+      throw new Error('Google Calendar request unauthorized (401).')
+    }
+
+    if (!response.ok) {
+      const details = await response.text()
+      throw new Error(`Google Calendar request failed (${response.status}): ${details}`)
+    }
+
+    const payload = await response.json() as GoogleCalendarApiResponse
+    if (Array.isArray(payload.items)) {
+      events.push(...payload.items)
+    }
+    pageToken = payload.nextPageToken
+  } while (pageToken)
+
+  return events
+}
+
+const importGoogleCalendarIntoLocal = async (): Promise<GoogleCalendarImportResult> => {
+  const clientId = process.env.JARVIS_GOOGLE_CLIENT_ID?.trim()
+  if (!clientId) {
+    throw new Error(
+      'Google Calendar sync is not configured. Set JARVIS_GOOGLE_CLIENT_ID and restart Jarvis.'
+    )
+  }
+
+  const now = Date.now()
+  const timeMinIso = new Date(now - GOOGLE_SYNC_LOOKBACK_DAYS * MS_PER_DAY).toISOString()
+  const timeMaxIso = new Date(now + GOOGLE_SYNC_LOOKAHEAD_DAYS * MS_PER_DAY).toISOString()
+
+  let tokenState = await ensureGoogleTokenState(clientId)
+  let remoteEvents: GoogleCalendarApiEvent[] = []
+
+  try {
+    remoteEvents = await fetchGoogleCalendarEvents(tokenState.accessToken, timeMinIso, timeMaxIso)
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes('401')) {
+      throw error
+    }
+    tokenState = await runGoogleOAuthFlow(clientId)
+    remoteEvents = await fetchGoogleCalendarEvents(tokenState.accessToken, timeMinIso, timeMaxIso)
+  }
+
+  const normalizedEvents = remoteEvents
+    .map(toGoogleCalendarInput)
+    .filter((event): event is CalendarEventInput => event !== null)
+
+  services.calendarService.clearSource('google')
+  const imported = services.calendarService.upsertEvents(normalizedEvents)
+
+  return {
+    imported,
+    total: normalizedEvents.length,
+    warning: normalizedEvents.length === 0
+      ? 'No Google events found in the sync window.'
+      : undefined
+  }
+}
 
 const captureScreen = async (): Promise<{ path: string; width: number; height: number; timestamp: string; activeWindow: string }> => {
   const sources = await desktopCapturer.getSources({
@@ -246,6 +645,24 @@ const registerIpc = (): void => {
     ragRemoveSource(services, payload.source)
   )
 
+  ipcMain.handle(
+    'calendar:list',
+    async (
+      _event,
+      payload?: { fromTime?: number; toTime?: number; limit?: number; source?: 'local' | 'google' }
+    ) => calendarListEvents(services, payload)
+  )
+  ipcMain.handle(
+    'calendar:upcoming',
+    async (_event, payload?: { limit?: number; horizonDays?: number }) =>
+      calendarUpcomingEvents(services, payload?.limit, payload?.horizonDays)
+  )
+  ipcMain.handle('calendar:add', async (_event, payload: CalendarEventInput) =>
+    calendarAddEvent(services, payload)
+  )
+  ipcMain.handle('calendar:stats', async () => calendarStats(services))
+  ipcMain.handle('calendar:google-import', async () => importGoogleCalendarIntoLocal())
+
   ipcMain.handle('dialog:open-files', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], title: 'Select files' })
     return result.canceled ? [] : result.filePaths
@@ -312,12 +729,21 @@ const registerIpc = (): void => {
       requestId: string
       model: string
       messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }[]
+      includeCalendarContext?: boolean
     }
   ) => {
     try {
-      await runAgent(services, { model: payload.model, messages: payload.messages }, (agentEvent) => {
-        event.sender.send('chat:agent', toAgentStreamPayload(payload.requestId, agentEvent))
-      })
+      await runAgent(
+        services,
+        {
+          model: payload.model,
+          messages: payload.messages,
+          includeCalendarContext: payload.includeCalendarContext
+        },
+        (agentEvent) => {
+          event.sender.send('chat:agent', toAgentStreamPayload(payload.requestId, agentEvent))
+        }
+      )
     } catch (error: unknown) {
       event.sender.send('chat:agent', toAgentStreamPayload(payload.requestId, {
         type: 'error',

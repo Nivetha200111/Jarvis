@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { ToolDefinition } from '../types/index.js'
 import type { ObsidianVaultService } from '../services/obsidian-vault.js'
 import type { RagService } from '../services/rag-service.js'
+import type { CalendarService } from '../services/calendar-service.js'
 
 export interface SystemToolCallbacks {
   captureScreen?: () => Promise<{ path: string; width: number; height: number; timestamp: string; activeWindow: string }>
@@ -17,6 +18,7 @@ export interface SystemToolCallbacks {
 export interface ToolExecutionContext {
   obsidianVault?: ObsidianVaultService
   ragService?: RagService
+  calendarService?: CalendarService
   system?: SystemToolCallbacks
 }
 
@@ -291,6 +293,47 @@ const ragTools: ToolDefinition[] = [
   }
 ]
 
+const calendarTools: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'calendar_upcoming',
+      description: 'List upcoming events from the local calendar.',
+      parameters: toObjectSchema(
+        {
+          limit: { type: 'number', description: 'Max events to return (default 8)' },
+          horizon_days: { type: 'number', description: 'How many days ahead to check (default 14)' }
+        }
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calendar_add_event',
+      description: 'Create a local calendar event for scheduling tasks and reminders.',
+      parameters: toObjectSchema(
+        {
+          title: { type: 'string', description: 'Event title' },
+          start_time: { type: 'string', description: 'Event start time (ISO datetime)' },
+          end_time: { type: 'string', description: 'Event end time (ISO datetime)' },
+          location: { type: 'string', description: 'Optional location' },
+          description: { type: 'string', description: 'Optional notes' }
+        },
+        ['title', 'start_time']
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'calendar_stats',
+      description: 'Get local calendar statistics and upcoming event counts.',
+      parameters: toObjectSchema({})
+    }
+  }
+]
+
 const parseLimit = (value: unknown, fallback: number, max: number): number => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return fallback
@@ -318,6 +361,7 @@ export const createAgentTools = (context: ToolExecutionContext = {}): ToolDefini
   if (context.system) tools.push(...systemTools)
   if (context.obsidianVault) tools.push(...obsidianTools)
   if (context.ragService) tools.push(...ragTools)
+  if (context.calendarService) tools.push(...calendarTools)
   return tools
 }
 
@@ -551,6 +595,63 @@ export const executeTool = async (
         const stats = context.ragService.getStats()
         return {
           output: `Knowledge base: ${stats.totalChunks} chunks from ${stats.sources.length} sources\nEmbedding model: ${stats.embeddingModel}\nSources: ${stats.sources.join(', ') || '(none)'}`,
+          success: true
+        }
+      }
+      // Calendar tools
+      case 'calendar_upcoming': {
+        if (!context.calendarService) {
+          return { output: 'Calendar integration is unavailable', success: false }
+        }
+
+        const limit = parseLimit(args.limit, 8, 100)
+        const horizonDays = parseLimit(args.horizon_days, 14, 365)
+        const events = context.calendarService.upcomingEvents(limit, horizonDays)
+        if (events.length === 0) {
+          return { output: `No upcoming events in the next ${horizonDays} day(s).`, success: true }
+        }
+
+        const output = events
+          .map((event) =>
+            `${new Date(event.startTime).toISOString()} - ${event.title}${event.location ? ` @ ${event.location}` : ''} [${event.source}]`
+          )
+          .join('\n')
+        return { output, success: true }
+      }
+      case 'calendar_add_event': {
+        if (!context.calendarService) {
+          return { output: 'Calendar integration is unavailable', success: false }
+        }
+
+        const title = String(args.title ?? '').trim()
+        const startRaw = String(args.start_time ?? '').trim()
+        const endRaw = String(args.end_time ?? '').trim()
+        const startTime = Date.parse(startRaw)
+        if (!title || Number.isNaN(startTime)) {
+          return { output: 'Valid title and start_time are required (ISO datetime).', success: false }
+        }
+        const endTime = endRaw ? Date.parse(endRaw) : startTime + 3_600_000
+        const next = context.calendarService.addEvent({
+          title,
+          startTime,
+          endTime: Number.isNaN(endTime) ? undefined : endTime,
+          location: String(args.location ?? '').trim(),
+          description: String(args.description ?? '').trim(),
+          source: 'local'
+        })
+        return {
+          output: `Created event "${next.title}" at ${new Date(next.startTime).toISOString()} (${next.id})`,
+          success: true
+        }
+      }
+      case 'calendar_stats': {
+        if (!context.calendarService) {
+          return { output: 'Calendar integration is unavailable', success: false }
+        }
+
+        const stats = context.calendarService.getStats()
+        return {
+          output: `Calendar events: ${stats.totalEvents} total | ${stats.upcomingEvents} upcoming | ${stats.localEvents} local | ${stats.googleEvents} Google`,
           success: true
         }
       }

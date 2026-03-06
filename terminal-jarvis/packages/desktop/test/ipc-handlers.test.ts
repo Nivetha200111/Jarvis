@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDesktopServices } from '../src/main/create-services.js'
 import {
+  calendarAddEvent,
+  calendarStats,
+  calendarUpcomingEvents,
   connectObsidianVault,
   getHealth,
   getObsidianStatus,
@@ -84,6 +87,26 @@ describe('desktop IPC handlers', () => {
 
     const refreshed = getObsidianStatus(services)
     expect(refreshed.connected).toBe(true)
+  })
+
+  it('stores and retrieves local calendar events', () => {
+    const services = createDesktopServices()
+    const start = Date.now() + 3_600_000
+
+    const created = calendarAddEvent(services, {
+      title: 'Project sync',
+      startTime: start,
+      endTime: start + 3_600_000,
+      source: 'local'
+    })
+    expect(created.title).toBe('Project sync')
+
+    const upcoming = calendarUpcomingEvents(services, 5, 7)
+    expect(upcoming.some((event) => event.id === created.id)).toBe(true)
+
+    const stats = calendarStats(services)
+    expect(stats.totalEvents).toBeGreaterThan(0)
+    expect(stats.localEvents).toBeGreaterThan(0)
   })
 
   it('emits done when stream ends without done-marked chunks', async () => {

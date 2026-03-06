@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentEvent, ModelInfo, ObsidianVaultStatus, RagStats } from '@jarvis/core'
+import type {
+  AgentEvent,
+  CalendarEventInput,
+  CalendarStats,
+  ModelInfo,
+  ObsidianVaultStatus,
+  RagStats
+} from '@jarvis/core'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
 
 type ChatMode = 'fast' | 'agent'
@@ -22,6 +29,15 @@ const VAULT_INDEX_IDLE_DELAY_MS = 120
 const VAULT_INDEX_TEXT_MAX_CHARS = 36_000
 const LIVE_SCREEN_REFRESH_MS = 1_800
 const VISION_MODEL_PATTERN = /(llava|vision|moondream|bakllava|qwen2\.5(?:-|:)?vl|llama3\.2-vision)/i
+const CALENDAR_CONTEXT_EVENT_LIMIT = 6
+const CALENDAR_CONTEXT_HORIZON_DAYS = 14
+
+const EMPTY_CALENDAR_STATS: CalendarStats = {
+  totalEvents: 0,
+  upcomingEvents: 0,
+  localEvents: 0,
+  googleEvents: 0
+}
 
 interface LiveScreenFrame {
   imageBase64: string
@@ -633,6 +649,9 @@ export const App = () => {
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([])
   const [chatMode, setChatMode] = useState<ChatMode>('fast')
   const [useVaultContext, setUseVaultContext] = useState(true)
+  const [useCalendarContext, setUseCalendarContext] = useState(true)
+  const [calendarStats, setCalendarStats] = useState<CalendarStats>(EMPTY_CALENDAR_STATS)
+  const [calendarSyncing, setCalendarSyncing] = useState(false)
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
   const [vaultIndexing, setVaultIndexing] = useState(false)
@@ -815,6 +834,19 @@ export const App = () => {
     window.jarvis.ragStats().then(setRagInfo).catch(() => {})
   }, [])
 
+  const refreshCalendarStats = useCallback(async (): Promise<void> => {
+    try {
+      const stats = await window.jarvis.calendarStats()
+      setCalendarStats(stats)
+    } catch {
+      // Calendar is optional; keep prior snapshot.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshCalendarStats()
+  }, [refreshCalendarStats])
+
   const readVaultNoteCached = useCallback(async (notePath: string): Promise<string> => {
     const cached = noteContentCacheRef.current.get(notePath)
     if (cached !== undefined) return cached
@@ -972,6 +1004,39 @@ export const App = () => {
     }
   }, [readVaultNoteCached, useVaultContext, vaultStatus.connected])
 
+  const buildPromptWithCalendarContext = useCallback(async (
+    userPrompt: string
+  ): Promise<{ content: string; eventCount: number }> => {
+    if (!useCalendarContext) {
+      return { content: userPrompt, eventCount: 0 }
+    }
+
+    try {
+      const events = await window.jarvis.calendarUpcoming(
+        CALENDAR_CONTEXT_EVENT_LIMIT,
+        CALENDAR_CONTEXT_HORIZON_DAYS
+      )
+      if (events.length === 0) {
+        return { content: userPrompt, eventCount: 0 }
+      }
+
+      const lines = events.map((event) => {
+        const sourceLabel = event.source === 'google' ? 'Google' : 'Local'
+        const timeLabel = event.allDay
+          ? `${new Date(event.startTime).toLocaleDateString()} (all day)`
+          : `${new Date(event.startTime).toLocaleString()} - ${new Date(event.endTime).toLocaleTimeString()}`
+        return `- ${timeLabel}: ${event.title} [${sourceLabel}]`
+      })
+
+      return {
+        content: `${userPrompt}\n\n[Schedule context]\n${lines.join('\n')}`,
+        eventCount: events.length
+      }
+    } catch {
+      return { content: userPrompt, eventCount: 0 }
+    }
+  }, [useCalendarContext])
+
   const setStatusSafe = useCallback((next: string): void => {
     if (statusRef.current === next) return
     statusRef.current = next
@@ -1095,6 +1160,82 @@ export const App = () => {
     }
   }
 
+  const handleAddLocalCalendarEvent = async (): Promise<void> => {
+    const raw = window.prompt('Add local event: title | start | end(optional)')
+    if (!raw) {
+      return
+    }
+
+    const [title, startRaw, endRaw] = raw
+      .split('|')
+      .map((segment) => segment.trim())
+
+    if (!title || !startRaw) {
+      pushErrorEntry('Calendar: use "title | start | end(optional)".')
+      return
+    }
+
+    const startTime = Date.parse(startRaw)
+    if (Number.isNaN(startTime)) {
+      pushErrorEntry('Calendar: start must be a valid date/time.')
+      return
+    }
+
+    const parsedEndTime = endRaw ? Date.parse(endRaw) : Number.NaN
+    if (endRaw && Number.isNaN(parsedEndTime)) {
+      pushErrorEntry('Calendar: end must be a valid date/time.')
+      return
+    }
+
+    const payload: CalendarEventInput = {
+      title,
+      startTime,
+      endTime: Number.isNaN(parsedEndTime) ? undefined : parsedEndTime,
+      source: 'local'
+    }
+
+    try {
+      const created = await window.jarvis.calendarAddEvent(payload)
+      await refreshCalendarStats()
+      setEntries((prev) => [
+        ...prev,
+        {
+          type: 'thinking',
+          content: `Local event added: ${created.title} at ${new Date(created.startTime).toLocaleString()}.`
+        }
+      ])
+      setStatusSafe('calendar updated')
+    } catch (e: unknown) {
+      pushErrorEntry(`Calendar: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  const handleGoogleCalendarImport = async (): Promise<void> => {
+    if (calendarSyncing) {
+      return
+    }
+
+    setCalendarSyncing(true)
+    setStatusSafe('syncing calendar...')
+    try {
+      const result = await window.jarvis.calendarImportGoogle()
+      await refreshCalendarStats()
+      const warning = result.warning ? ` ${result.warning}` : ''
+      setEntries((prev) => [
+        ...prev,
+        {
+          type: 'thinking',
+          content: `Google calendar synced: ${result.imported}/${result.total} events imported.${warning}`
+        }
+      ])
+      setStatusSafe('calendar synced')
+    } catch (e: unknown) {
+      pushErrorEntry(`Google Calendar: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setCalendarSyncing(false)
+    }
+  }
+
   const handleAttachFolder = async (): Promise<void> => {
     const paths = await window.jarvis.openFolder()
     if (paths.length > 0) setAttachedPaths((prev) => [...prev, ...paths])
@@ -1165,11 +1306,14 @@ export const App = () => {
 
     let content = text
     let injectedMatches = 0
+    let calendarMatches = 0
     let contextMode: 'none' | 'keyword' | 'rag' | 'broad' = 'none'
     let contextPaths: string[] = []
     let screenFrameAttached = false
     let attachedFrame: LiveScreenFrame | null = null
     let screenFrameDetails = ''
+    const forceAgentMode = attachedPaths.length > 0
+    const useAgentMode = chatMode === 'agent' || forceAgentMode
 
     if (vaultStatus.connected && useVaultContext) {
       setStatusSafe('retrieving context...')
@@ -1180,6 +1324,15 @@ export const App = () => {
       contextPaths = enriched.notePaths
     }
 
+    if (useCalendarContext && !useAgentMode) {
+      if (!vaultStatus.connected || !useVaultContext) {
+        setStatusSafe('retrieving schedule...')
+      }
+      const enrichedSchedule = await buildPromptWithCalendarContext(content)
+      content = enrichedSchedule.content
+      calendarMatches = enrichedSchedule.eventCount
+    }
+
     if (liveScreenMode && liveScreenFrame && selectedModelSupportsVision) {
       const activeWindow = liveScreenFrame.activeWindow || 'unknown'
       screenFrameDetails = `window: ${activeWindow} @ ${liveScreenFrame.timestamp}`
@@ -1188,7 +1341,6 @@ export const App = () => {
       attachedFrame = liveScreenFrame
     }
 
-    const forceAgentMode = attachedPaths.length > 0
     if (attachedPaths.length > 0) {
       content = `${content}\n\n[Attached files/folders]\n${attachedPaths.map((p) => `  - ${p}`).join('\n')}`
       setAttachedPaths([])
@@ -1209,6 +1361,12 @@ export const App = () => {
               : `Context matched ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
         })
       }
+      if (calendarMatches > 0) {
+        next.push({
+          type: 'thinking',
+          content: `Schedule context ready from ${calendarMatches} upcoming event${calendarMatches > 1 ? 's' : ''}.`
+        })
+      }
       if (screenFrameAttached) {
         next.push({
           type: 'thinking',
@@ -1226,7 +1384,6 @@ export const App = () => {
       userMessage.images = [attachedFrame.imageBase64]
     }
     const messages = [userMessage]
-    const useAgentMode = chatMode === 'agent' || forceAgentMode
 
     if (!useAgentMode) {
       touchStreamWatchdog()
@@ -1255,61 +1412,66 @@ export const App = () => {
     }
 
     touchStreamWatchdog()
-    streamUnsubscribeRef.current = window.jarvis.agentChat(selectedModel, messages, (event: AgentEvent) => {
-      touchStreamWatchdog()
-      switch (event.type) {
-        case 'stream_token':
-          setStatusSafe('generating...')
-          pendingTokenRef.current += event.token
-          scheduleTokenFlush()
-          break
-        case 'thinking':
-          flushImmediately()
-          setStatusSafe('reasoning...')
-          setEntries((prev) => [...prev, { type: 'thinking', content: event.content }])
-          break
-        case 'tool_call':
-          flushImmediately()
-          setStatusSafe(`${event.name}...`)
-          setEntries((prev) => {
-            const last = prev[prev.length - 1]
-            if (last && last.type === 'assistant') {
-              return [
-                ...prev.slice(0, -1),
-                { type: 'thinking', content: last.content },
-                { type: 'tool_call', content: `${event.name}(${JSON.stringify(event.arguments)})` }
-              ]
-            }
-            return [...prev, { type: 'tool_call', content: `${event.name}(${JSON.stringify(event.arguments)})` }]
-          })
-          break
-        case 'tool_result':
-          flushImmediately()
-          setEntries((prev) => [
-            ...prev,
-            { type: 'tool_result', content: event.output.slice(0, 2000) + (event.output.length > 2000 ? '\n...' : '') }
-          ])
-          break
-        case 'text':
-          flushImmediately()
-          setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
-          finalizeStream('ready')
-          break
-        case 'done':
-          finalizeStream('ready')
-          break
-        case 'error':
-          flushImmediately()
-          setEntries((prev) => [...prev, { type: 'error', content: event.message }])
-          finalizeStream('ready')
-          break
-      }
-    })
+    streamUnsubscribeRef.current = window.jarvis.agentChat(
+      selectedModel,
+      messages,
+      (event: AgentEvent) => {
+        touchStreamWatchdog()
+        switch (event.type) {
+          case 'stream_token':
+            setStatusSafe('generating...')
+            pendingTokenRef.current += event.token
+            scheduleTokenFlush()
+            break
+          case 'thinking':
+            flushImmediately()
+            setStatusSafe('reasoning...')
+            setEntries((prev) => [...prev, { type: 'thinking', content: event.content }])
+            break
+          case 'tool_call':
+            flushImmediately()
+            setStatusSafe(`${event.name}...`)
+            setEntries((prev) => {
+              const last = prev[prev.length - 1]
+              if (last && last.type === 'assistant') {
+                return [
+                  ...prev.slice(0, -1),
+                  { type: 'thinking', content: last.content },
+                  { type: 'tool_call', content: `${event.name}(${JSON.stringify(event.arguments)})` }
+                ]
+              }
+              return [...prev, { type: 'tool_call', content: `${event.name}(${JSON.stringify(event.arguments)})` }]
+            })
+            break
+          case 'tool_result':
+            flushImmediately()
+            setEntries((prev) => [
+              ...prev,
+              { type: 'tool_result', content: event.output.slice(0, 2000) + (event.output.length > 2000 ? '\n...' : '') }
+            ])
+            break
+          case 'text':
+            flushImmediately()
+            setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
+            finalizeStream('ready')
+            break
+          case 'done':
+            finalizeStream('ready')
+            break
+          case 'error':
+            flushImmediately()
+            setEntries((prev) => [...prev, { type: 'error', content: event.message }])
+            finalizeStream('ready')
+            break
+        }
+      },
+      { includeCalendarContext: useCalendarContext }
+    )
   }, [
-    attachedPaths, buildPromptWithVaultContext, chatMode,
+    attachedPaths, buildPromptWithVaultContext, buildPromptWithCalendarContext, chatMode,
     scheduleTokenFlush, selectedModel, setStatusSafe,
     teardownStream, useVaultContext, vaultStatus.connected, flushImmediately, finalizeStream, touchStreamWatchdog,
-    liveScreenMode, liveScreenFrame, selectedModelSupportsVision
+    liveScreenMode, liveScreenFrame, selectedModelSupportsVision, useCalendarContext
   ])
 
   const handleSend = (): void => {
@@ -1418,6 +1580,41 @@ export const App = () => {
             </button>
           )}
 
+          {!pipMode && (
+            <button
+              type="button"
+              className={`tb-btn tb-btn--accent ${useCalendarContext ? 'tb-btn--active' : ''}`}
+              onClick={() => setUseCalendarContext((current) => !current)}
+              disabled={busy}
+            >
+              Schedule {useCalendarContext ? 'On' : 'Off'}
+            </button>
+          )}
+
+          {!pipMode && (
+            <button
+              type="button"
+              className="tb-btn"
+              onClick={handleAddLocalCalendarEvent}
+              disabled={busy || calendarSyncing}
+              title="Add a local calendar event"
+            >
+              + Event
+            </button>
+          )}
+
+          {!pipMode && (
+            <button
+              type="button"
+              className={`tb-btn tb-btn--green ${calendarSyncing ? 'tb-btn--active' : ''}`}
+              onClick={handleGoogleCalendarImport}
+              disabled={calendarSyncing}
+              title="Import Google Calendar into local schedule"
+            >
+              {calendarSyncing ? 'Syncing...' : 'Google Sync'}
+            </button>
+          )}
+
           {!pipMode && canSaveReply && (
             <button type="button" className="tb-btn tb-btn--green" onClick={handleSaveLastReply}>
               Save
@@ -1449,6 +1646,13 @@ export const App = () => {
             <span className="tb-badge">
               <span className="tb-badge-dot" style={{ background: '#34d399', boxShadow: '0 0 6px rgba(52,211,153,0.4)' }} />
               RAG {ragInfo.totalChunks}
+            </span>
+          )}
+
+          {!pipMode && calendarStats.totalEvents > 0 && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#60a5fa', boxShadow: '0 0 6px rgba(96,165,250,0.4)' }} />
+              Cal {calendarStats.upcomingEvents}
             </span>
           )}
 

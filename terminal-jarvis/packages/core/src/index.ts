@@ -57,5 +57,16 @@ export type { VectorStore, VectorChunk, SearchResult, CreateVectorStoreOptions }
 export { createRagService } from './services/rag-service.js'
 export type { RagService, RagResult, RagStats, CreateRagServiceOptions } from './services/rag-service.js'
 
+export { createCalendarService } from './services/calendar-service.js'
+export type {
+  CalendarService,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarEventSource,
+  CalendarListOptions,
+  CalendarStats,
+  CreateCalendarServiceOptions
+} from './services/calendar-service.js'
+
 export { createRuntimeSelection } from './runtime/create-runtime.js'
 export type { RuntimeSelection, EngineProvider } from './runtime/create-runtime.js'

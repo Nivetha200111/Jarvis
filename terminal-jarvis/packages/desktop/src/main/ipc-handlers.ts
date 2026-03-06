@@ -6,6 +6,9 @@ import type {
   ObsidianNoteSummary,
   ObsidianSearchHit,
   ObsidianWriteResult,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarStats,
   RagStats,
   RagResult
 } from '@jarvis/core'
@@ -73,10 +76,13 @@ export const runAgent = async (
   payload: {
     model: string
     messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }>
+    includeCalendarContext?: boolean
   },
   onEvent: (event: AgentEvent) => void
 ): Promise<void> => {
-  for await (const agentEvent of services.agentService.run(payload.model, payload.messages)) {
+  for await (const agentEvent of services.agentService.run(payload.model, payload.messages, {
+    includeCalendarContext: payload.includeCalendarContext
+  })) {
     onEvent(agentEvent)
   }
 }
@@ -144,6 +150,25 @@ export const ragSearch = async (
 
 export const ragRemoveSource = (services: DesktopServices, source: string): number =>
   services.ragService.removeSource(source)
+
+export const calendarListEvents = (
+  services: DesktopServices,
+  options?: { fromTime?: number; toTime?: number; limit?: number; source?: 'local' | 'google' }
+): CalendarEvent[] => services.calendarService.listEvents(options)
+
+export const calendarUpcomingEvents = (
+  services: DesktopServices,
+  limit?: number,
+  horizonDays?: number
+): CalendarEvent[] => services.calendarService.upcomingEvents(limit, horizonDays)
+
+export const calendarAddEvent = (
+  services: DesktopServices,
+  input: CalendarEventInput
+): CalendarEvent => services.calendarService.addEvent(input)
+
+export const calendarStats = (services: DesktopServices): CalendarStats =>
+  services.calendarService.getStats()
 
 export const toStreamPayload = (requestId: string, chunk: Omit<StreamEvent, 'requestId'>): StreamEvent => ({
   requestId,

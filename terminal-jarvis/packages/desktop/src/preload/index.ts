@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentEvent,
+  CalendarEvent,
+  CalendarEventInput,
+  CalendarStats,
   ChatCompletionRequest,
   ModelInfo,
   ObsidianVaultStatus,
@@ -27,13 +30,20 @@ export interface LiveScreenFrame {
   activeWindow: string
 }
 
+export interface GoogleCalendarImportResult {
+  imported: number
+  total: number
+  warning?: string
+}
+
 export interface PreloadApi {
   chatSend(request: ChatCompletionRequest): Promise<ChatSendResponse>
   chatStream(request: ChatCompletionRequest, onEvent: (event: StreamEvent) => void): () => void
   agentChat(
     model: string,
     messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }>,
-    onEvent: (event: AgentEvent) => void
+    onEvent: (event: AgentEvent) => void,
+    options?: { includeCalendarContext?: boolean }
   ): () => void
   openFiles(): Promise<string[]>
   openFolder(): Promise<string[]>
@@ -50,6 +60,11 @@ export interface PreloadApi {
   ragSearch(query: string, limit?: number): Promise<RagResult[]>
   ragStats(): Promise<RagStats>
   ragRemove(source: string): Promise<number>
+  calendarList(options?: { fromTime?: number; toTime?: number; limit?: number; source?: 'local' | 'google' }): Promise<CalendarEvent[]>
+  calendarUpcoming(limit?: number, horizonDays?: number): Promise<CalendarEvent[]>
+  calendarAddEvent(input: CalendarEventInput): Promise<CalendarEvent>
+  calendarStats(): Promise<CalendarStats>
+  calendarImportGoogle(): Promise<GoogleCalendarImportResult>
   // Window controls
   togglePip(): Promise<boolean>
   isPip(): Promise<boolean>
@@ -78,7 +93,7 @@ const api: PreloadApi = {
     ipcRenderer.send('chat:stream', { requestId, request })
     return () => { ipcRenderer.removeListener('chat:stream', listener) }
   },
-  agentChat: (model, messages, onEvent) => {
+  agentChat: (model, messages, onEvent, options) => {
     const requestId = `agent-${Date.now()}-${Math.floor(Math.random() * 100000)}`
     const listener = (_event: Electron.IpcRendererEvent, payload: AgentStreamEvent): void => {
       if (payload.requestId !== requestId) return
@@ -88,7 +103,12 @@ const api: PreloadApi = {
       }
     }
     ipcRenderer.on('chat:agent', listener)
-    ipcRenderer.send('chat:agent', { requestId, model, messages })
+    ipcRenderer.send('chat:agent', {
+      requestId,
+      model,
+      messages,
+      includeCalendarContext: options?.includeCalendarContext
+    })
     return () => { ipcRenderer.removeListener('chat:agent', listener) }
   },
   openFiles: () => ipcRenderer.invoke('dialog:open-files'),
@@ -106,6 +126,11 @@ const api: PreloadApi = {
   ragSearch: (query, limit) => ipcRenderer.invoke('rag:search', { query, limit }),
   ragStats: () => ipcRenderer.invoke('rag:stats'),
   ragRemove: (source) => ipcRenderer.invoke('rag:remove', { source }),
+  calendarList: (options) => ipcRenderer.invoke('calendar:list', options),
+  calendarUpcoming: (limit, horizonDays) => ipcRenderer.invoke('calendar:upcoming', { limit, horizonDays }),
+  calendarAddEvent: (input) => ipcRenderer.invoke('calendar:add', input),
+  calendarStats: () => ipcRenderer.invoke('calendar:stats'),
+  calendarImportGoogle: () => ipcRenderer.invoke('calendar:google-import'),
   // Window
   togglePip: () => ipcRenderer.invoke('window:toggle-pip'),
   isPip: () => ipcRenderer.invoke('window:is-pip'),

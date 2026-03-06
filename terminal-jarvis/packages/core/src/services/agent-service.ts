@@ -2,6 +2,7 @@ import type { EngineAdapter, ChatMessage, AgentEvent, ToolCall } from '../types/
 import type { ModelManager } from './model-manager.js'
 import type { ObsidianVaultService } from './obsidian-vault.js'
 import type { RagService } from './rag-service.js'
+import type { CalendarService } from './calendar-service.js'
 import type { SystemToolCallbacks } from '../tools/index.js'
 import { createAgentTools, executeTool } from '../tools/index.js'
 
@@ -33,12 +34,17 @@ const toVaultExcerpt = (content: string, maxChars = 1200): string => {
 }
 
 export interface AgentService {
-  run(modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent>
+  run(
+    modelId: string,
+    userMessages: ChatMessage[],
+    runOptions?: { includeCalendarContext?: boolean }
+  ): AsyncGenerator<AgentEvent>
 }
 
 export interface CreateAgentServiceOptions {
   obsidianVault?: ObsidianVaultService
   ragService?: RagService
+  calendarService?: CalendarService
   system?: SystemToolCallbacks
 }
 
@@ -55,7 +61,11 @@ export const createAgentService = (
     hasWarnedAboutUnrestrictedTools = true
   }
 
-  const run = async function* (modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent> {
+  const run = async function* (
+    modelId: string,
+    userMessages: ChatMessage[],
+    runOptions: { includeCalendarContext?: boolean } = {}
+  ): AsyncGenerator<AgentEvent> {
     if (!engine.streamChatWithTools) {
       yield { type: 'error', message: 'Engine does not support tool calling' }
       return
@@ -121,8 +131,17 @@ export const createAgentService = (
       }
     }
 
+    let calendarContext = ''
+    if (options.calendarService && runOptions.includeCalendarContext !== false) {
+      try {
+        calendarContext = `\n\n${options.calendarService.getContextSummary(Date.now(), 14, 6)}`
+      } catch {
+        // Calendar context unavailable — continue without schedule info.
+      }
+    }
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT + vaultContext + ragContext },
+      { role: 'system', content: SYSTEM_PROMPT + vaultContext + ragContext + calendarContext },
       ...userMessages
     ]
 
@@ -134,7 +153,14 @@ export const createAgentService = (
       let isFirstTokenInRound = true
 
       try {
-        const tools = toolsSupported ? createAgentTools({ obsidianVault: options.obsidianVault, ragService: options.ragService, system: options.system }) : []
+        const tools = toolsSupported
+          ? createAgentTools({
+            obsidianVault: options.obsidianVault,
+            ragService: options.ragService,
+            calendarService: options.calendarService,
+            system: options.system
+          })
+          : []
         for await (const event of engine.streamChatWithTools(messages, tools)) {
           if (event.type === 'token') {
             if (isFirstTokenInRound && round === 0) {
@@ -195,7 +221,12 @@ export const createAgentService = (
 
         yield { type: 'tool_call', name, arguments: args }
 
-        const result = await executeTool(name, args, { obsidianVault: options.obsidianVault, ragService: options.ragService, system: options.system })
+        const result = await executeTool(name, args, {
+          obsidianVault: options.obsidianVault,
+          ragService: options.ragService,
+          calendarService: options.calendarService,
+          system: options.system
+        })
 
         yield { type: 'tool_result', name, output: result.output, success: result.success }
 

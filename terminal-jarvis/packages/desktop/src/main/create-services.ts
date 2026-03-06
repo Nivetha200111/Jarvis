@@ -1,5 +1,6 @@
 import {
   createAgentService,
+  createCalendarService,
   createChatService,
   createConfigManager,
   createEmbeddingService,
@@ -9,6 +10,7 @@ import {
   createTranscriptStore,
   createVectorStore,
   type AgentService,
+  type CalendarService,
   type ChatService,
   type ConfigManager,
   type EngineProvider,
@@ -22,6 +24,7 @@ import {
 export interface DesktopServices {
   chatService: ChatService
   agentService: AgentService
+  calendarService: CalendarService
   modelManager: ModelManager
   engine: EngineAdapter
   provider: EngineProvider
@@ -40,6 +43,7 @@ export const createDesktopServices = (system?: SystemToolCallbacks): DesktopServ
     initialVaultPath: configManager.get('obsidianVaultPath')
   })
   const transcriptStore = createTranscriptStore()
+  const calendarService = createCalendarService()
   const chatService = createChatService({
     engine: runtime.engine,
     modelManager,
@@ -55,6 +59,7 @@ export const createDesktopServices = (system?: SystemToolCallbacks): DesktopServ
   const agentService = createAgentService(runtime.engine, modelManager, {
     obsidianVault: obsidianVaultService,
     ragService,
+    calendarService,
     system
   })
 
@@ -64,6 +69,7 @@ export const createDesktopServices = (system?: SystemToolCallbacks): DesktopServ
   return {
     chatService,
     agentService,
+    calendarService,
     modelManager,
     engine: runtime.engine,
     provider: runtime.provider,
