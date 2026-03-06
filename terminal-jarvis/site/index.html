@@ -61,13 +61,49 @@
           <span id="detected-os" class="meta-tag">Detecting platform...</span>
           <span id="release-note" class="meta-tag meta-dim">Checking artifacts...</span>
         </div>
-        <div class="hero-demo" id="demo">
-          <img
-            src="./assets/demo.gif"
-            alt="Terminal Jarvis demo showing local streaming chat with vault and schedule context"
-            loading="lazy"
-          />
-          <p class="hero-demo-note">Desktop demo: streaming replies with Obsidian + local calendar context.</p>
+        <div class="hero-demo hero-demo--immersive" id="demo">
+          <div class="demo-stage" aria-label="Interactive Jarvis simulation">
+            <div class="demo-toolbar">
+              <div class="demo-lights" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+              <div class="demo-mode-row">
+                <span id="demo-chip-mode" class="demo-chip">agent</span>
+                <span id="demo-chip-vault" class="demo-chip">vault on</span>
+                <span id="demo-chip-schedule" class="demo-chip">schedule on</span>
+              </div>
+              <button id="demo-replay" class="demo-replay" type="button">Replay</button>
+            </div>
+            <div class="demo-body">
+              <aside class="demo-side" aria-hidden="true">
+                <div class="demo-side-card">
+                  <div class="demo-side-label">model</div>
+                  <div id="demo-model" class="demo-side-value">qwen2.5:3b</div>
+                </div>
+                <div class="demo-side-card">
+                  <div class="demo-side-label">vault ctx</div>
+                  <div id="demo-vault-count" class="demo-side-value">7 notes</div>
+                </div>
+                <div class="demo-side-card">
+                  <div class="demo-side-label">schedule</div>
+                  <div id="demo-schedule-count" class="demo-side-value">5 events</div>
+                </div>
+                <div class="demo-side-card">
+                  <div class="demo-side-label">status</div>
+                  <div id="demo-status-text" class="demo-side-value">ready</div>
+                </div>
+              </aside>
+              <div id="demo-chat" class="demo-chat" aria-live="polite"></div>
+            </div>
+            <div class="demo-input">
+              <span class="demo-input-prefix">you&gt;</span>
+              <span id="demo-input-text" class="demo-input-text"></span>
+              <span class="demo-cursor" aria-hidden="true"></span>
+            </div>
+          </div>
+          <p class="hero-demo-note">Live in-page simulation: streaming, context retrieval, and schedule-aware planning without any recorded media.</p>
         </div>
       </section>
 

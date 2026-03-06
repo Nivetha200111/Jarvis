@@ -152,3 +152,208 @@ const observer = new IntersectionObserver(
 )
 
 document.querySelectorAll('.anim-in').forEach((el) => observer.observe(el))
+
+const initializeImmersiveDemo = () => {
+  const root = document.getElementById('demo')
+  if (!root) {
+    return
+  }
+
+  const replayButton = document.getElementById('demo-replay')
+  const modeChip = document.getElementById('demo-chip-mode')
+  const vaultChip = document.getElementById('demo-chip-vault')
+  const scheduleChip = document.getElementById('demo-chip-schedule')
+  const modelText = document.getElementById('demo-model')
+  const vaultCountText = document.getElementById('demo-vault-count')
+  const scheduleCountText = document.getElementById('demo-schedule-count')
+  const statusText = document.getElementById('demo-status-text')
+  const chat = document.getElementById('demo-chat')
+  const inputText = document.getElementById('demo-input-text')
+
+  if (
+    !replayButton
+    || !modeChip
+    || !vaultChip
+    || !scheduleChip
+    || !modelText
+    || !vaultCountText
+    || !scheduleCountText
+    || !statusText
+    || !chat
+    || !inputText
+  ) {
+    return
+  }
+
+  const steps = [
+    {
+      mode: 'agent',
+      model: 'qwen2.5:3b',
+      vaultOn: true,
+      scheduleOn: true,
+      vaultCount: '7 notes',
+      scheduleCount: '5 events',
+      prompt: 'summarize my day and flag schedule conflicts',
+      context: 'Fetched vault + calendar context.',
+      answer:
+        'Pulled context from 7 vault notes and 5 events. Conflict found: design review overlaps sprint planning by 30 minutes.'
+    },
+    {
+      mode: 'agent',
+      model: 'qwen2.5:3b',
+      vaultOn: true,
+      scheduleOn: true,
+      vaultCount: '9 notes',
+      scheduleCount: '5 events',
+      prompt: 'draft a prep checklist and save it to vault',
+      context: 'Writing note and linking relevant docs.',
+      answer:
+        'Checklist drafted and saved to Jarvis/2026-03-06.md. Included agenda, blockers, and decision owners.'
+    },
+    {
+      mode: 'fast',
+      model: 'qwen2.5:1.5b',
+      vaultOn: true,
+      scheduleOn: true,
+      vaultCount: '9 notes',
+      scheduleCount: '6 events',
+      prompt: 'queue tomorrow priorities in order',
+      context: 'Using latest schedule and pending tasks.',
+      answer:
+        'Priorities queued: 1) finalize deck 2) QA pass 3) release note draft. Added local reminder for 09:30.'
+    }
+  ]
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  let runId = 0
+  let replayTimer
+
+  const wait = (ms) =>
+    new Promise((resolve) => {
+      window.setTimeout(resolve, ms)
+    })
+
+  const stopReplayTimer = () => {
+    if (replayTimer) {
+      window.clearTimeout(replayTimer)
+      replayTimer = undefined
+    }
+  }
+
+  const scrollChatToBottom = () => {
+    chat.scrollTop = chat.scrollHeight
+  }
+
+  const addMessage = (variant, text) => {
+    const node = document.createElement('div')
+    node.className = `demo-msg demo-msg--${variant}`
+    node.textContent = text
+    chat.appendChild(node)
+    scrollChatToBottom()
+    return node
+  }
+
+  const applyState = (step) => {
+    modeChip.textContent = step.mode
+    vaultChip.textContent = step.vaultOn ? 'vault on' : 'vault off'
+    scheduleChip.textContent = step.scheduleOn ? 'schedule on' : 'schedule off'
+
+    modeChip.classList.add('demo-chip--active')
+    vaultChip.classList.toggle('demo-chip--active', step.vaultOn)
+    scheduleChip.classList.toggle('demo-chip--active', step.scheduleOn)
+
+    modelText.textContent = step.model
+    vaultCountText.textContent = step.vaultCount
+    scheduleCountText.textContent = step.scheduleCount
+  }
+
+  const typeInput = async (text, token) => {
+    inputText.textContent = ''
+    if (reducedMotion) {
+      inputText.textContent = text
+      return
+    }
+
+    for (const char of text) {
+      if (token !== runId) {
+        return
+      }
+      inputText.textContent += char
+      await wait(16 + Math.floor(Math.random() * 14))
+    }
+  }
+
+  const streamAnswer = async (text, token) => {
+    const node = addMessage('assistant', '')
+    if (reducedMotion) {
+      node.textContent = `jarvis> ${text}`
+      return
+    }
+
+    const full = `jarvis> ${text}`
+    for (let i = 0; i < full.length; i += 1) {
+      if (token !== runId) {
+        return
+      }
+      node.textContent += full[i] ?? ''
+      if (i % 2 === 0) {
+        scrollChatToBottom()
+      }
+      await wait(8 + Math.floor(Math.random() * 8))
+    }
+  }
+
+  const run = async () => {
+    runId += 1
+    const token = runId
+    stopReplayTimer()
+
+    chat.innerHTML = ''
+    inputText.textContent = ''
+    addMessage('thinking', '~ live simulation started')
+
+    for (const step of steps) {
+      if (token !== runId) {
+        return
+      }
+
+      applyState(step)
+      statusText.textContent = 'typing...'
+      await typeInput(step.prompt, token)
+
+      if (token !== runId) {
+        return
+      }
+
+      addMessage('user', `you> ${step.prompt}`)
+      inputText.textContent = ''
+
+      statusText.textContent = 'retrieving context...'
+      addMessage('thinking', `~ ${step.context}`)
+      await wait(reducedMotion ? 120 : 650)
+
+      if (token !== runId) {
+        return
+      }
+
+      statusText.textContent = 'generating...'
+      await streamAnswer(step.answer, token)
+      statusText.textContent = 'ready'
+
+      await wait(reducedMotion ? 120 : 850)
+    }
+
+    statusText.textContent = 'replaying...'
+    replayTimer = window.setTimeout(() => {
+      void run()
+    }, reducedMotion ? 1200 : 2400)
+  }
+
+  replayButton.addEventListener('click', () => {
+    void run()
+  })
+
+  void run()
+}
+
+initializeImmersiveDemo()
