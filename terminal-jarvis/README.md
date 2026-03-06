@@ -1,106 +1,145 @@
-# Terminal Jarvis Monorepo
+# Terminal Jarvis
 
-This is the runnable baseline monorepo for Terminal Jarvis.
+Local-first AI assistant with a terminal experience, desktop app, and OpenAI-compatible API.
 
-## Quick Start
+Terminal Jarvis is designed for people who want local control, local data, and practical agent capabilities on their own machine.
 
-1. Use Node.js 22.x (`cat .nvmrc`)
-2. Install dependencies: `npm ci`
-3. Verify environment: `npm run check-env`
-4. Build everything: `npm run build`
+## Why Terminal Jarvis
 
-## Run Apps
+- Fully local execution through Ollama-compatible models
+- Desktop + CLI + API surfaces in one codebase
+- Built-in Obsidian vault integration
+- Local RAG retrieval from indexed files/notes
+- Streaming output with queued prompts
+- Agent tools for shell/files/system actions
+- Linux + Windows portable release bundles
+
+## Quick Start (Source)
+
+```bash
+cd /home/nivetha/Jarvis/terminal-jarvis
+npm ci
+npm run check-env
+npm run build
+```
+
+Node policy: `22.x` (see `.nvmrc`).
+
+## Run Interfaces
 
 - CLI: `npm run dev:cli`
 - API: `npm run dev:api`
 - Desktop: `npm run dev:desktop`
-- Marketing site: `npm run dev:site` (http://localhost:4173)
+- Site (Vercel preview): `npm run dev:site` (http://localhost:4173)
 
-## Obsidian Integration
+## Portable Releases
 
-Use the local OpenAI-compatible API with Obsidian plugins that support custom OpenAI endpoints.
+Releases are published with Linux + Windows desktop bundles:
 
+- Linux: `terminal-jarvis-linux-x64.tar.gz`
+- Windows: `terminal-jarvis-windows-x64.zip`
+
+Bundle launchers:
+
+- Linux: `./run-jarvis.sh`
+- Windows: `run-jarvis.bat`
+
+On first launch, the installer/launcher auto-provisions:
+
+- `qwen2.5:3b` (preferred), fallback to `qwen2.5:1.5b`, then `qwen2.5`
+- `nomic-embed-text` for RAG embeddings
+
+## Obsidian + RAG
+
+Two ways to integrate with Obsidian:
+
+1. Desktop built-in vault mode
+- Open Desktop and click `connect vault`
+- Search/read/write notes from Jarvis
+- `save reply` appends to `Jarvis/YYYY-MM-DD.md` in your vault
+
+2. API via Obsidian plugins
 - Start API: `JARVIS_ENGINE=ollama npm run dev:api`
-- Base URL in Obsidian plugin: `http://127.0.0.1:8080/v1`
-- API key: any non-empty string
-- Model: one returned by `GET /v1/models`
+- Endpoint: `http://127.0.0.1:8080/v1`
+- Model: from `GET /v1/models`
 
-Full guide: `docs/obsidian-integration.md`
+Detailed guide: `docs/obsidian-integration.md`
 
-Built-in desktop vault mode is also available:
-- open Desktop: `npm run dev:desktop`
-- click `connect vault` in the header and pick your Obsidian vault folder
-- ask Jarvis to search/read/write notes, or use `save reply` to append the latest response into `Jarvis/YYYY-MM-DD.md`
+## Security Defaults
 
-## Jarvis vs Ollama
+- API auth is available with `JARVIS_API_KEY`
+  - Accepts `Authorization: Bearer <key>` or `x-api-key`
+- CORS defaults to local browser origins when `JARVIS_CORS_ORIGIN` is unset
+- If you set permissive CORS (`*`/`true`), Jarvis logs a security warning
+- Agent mode has intentionally high local privileges (shell/files/system tools)
+  - Jarvis logs a warning because this cannot be fully sandboxed without removing core features
+- Suppress warnings with `JARVIS_SUPPRESS_SECURITY_WARNINGS=1`
 
-- Ollama:
-  - focuses on local model serving and chat primitives
-  - model/runtime management + API endpoints
-- Jarvis:
-  - can use Ollama as its inference backend
-  - adds CLI + desktop app + agent tooling (file/command tools)
-  - adds transcript/config workflows and a unified product UX
+## Local-First Paths
 
-### Use Ollama Models
-
-By default runtime selection is `auto`:
-- if local Ollama models are discovered (`ollama list`), Jarvis uses Ollama
-- otherwise it falls back to the mock engine
-
-You can force provider selection:
-
-```bash
-JARVIS_ENGINE=ollama npm run dev:cli
-JARVIS_ENGINE=mock npm run dev:cli
-```
-
-If Ollama has no local model yet, pull one first:
-
-```bash
-ollama pull llama3.2
-JARVIS_ENGINE=ollama npm run dev:cli
-```
-
-## Quality Gates
-
-- Lint: `npm run lint`
-- Typecheck: `npm run typecheck`
-- Tests: `npm run test`
-- E2E placeholder: `npm run test:e2e`
-- Smoke checks: `npm run smoke:cli && npm run smoke:api && npm run smoke:desktop`
-
-## Security Notes
-
-- API auth: set `JARVIS_API_KEY` to require `Authorization: Bearer <key>` (or `x-api-key`) for `/v1/*` endpoints.
-- CORS defaults to local browser origins only when `JARVIS_CORS_ORIGIN` is unset.
-- If you explicitly set `JARVIS_CORS_ORIGIN=*` (or `true`), Jarvis logs a security warning because any website can call the local API from a browser.
-- Agent mode intentionally has high local privileges (shell/file/system tools). This cannot be fully sandboxed without removing core features; Jarvis logs a warning at runtime.
-- You can suppress warning logs with `JARVIS_SUPPRESS_SECURITY_WARNINGS=1`.
-
-## Local-First Defaults
-
-Configuration defaults target `~/.jarvis` for future persistence:
+Default local paths target `~/.jarvis`:
 
 - data directory: `~/.jarvis`
 - models directory: `~/.jarvis/models`
 - config file: `~/.jarvis/config.toml`
+- vector store: `~/.jarvis/vectors.json`
 
-## Marketing Page (Vercel)
+## Developer Workflow
 
-- Static marketing/download page is in `site/`
-- Vercel config is in `vercel.json`
-- Deploy `terminal-jarvis` as the project root in Vercel
-- Download buttons include Linux (`.tar.gz`) and Windows (`.zip`) release targets
+Quality gates:
 
-## Release Bundles
+- `npm run lint`
+- `npm run typecheck`
+- `npm run test`
+- `npm run test:e2e`
+- `npm run smoke:cli && npm run smoke:api && npm run smoke:desktop`
 
-- Workflow: `.github/workflows/release-artifacts.yml`
-- Trigger: tag push like `v0.1.0` (or manual `workflow_dispatch`)
-- Publishes:
-  - `terminal-jarvis-linux-x64.tar.gz`
-  - `terminal-jarvis-windows-x64.zip`
-- Bundle includes:
-  - `app/` (desktop app build)
-  - `electron/` runtime
-  - launcher scripts: `run-jarvis.sh` (Linux) or `run-jarvis.bat` (Windows)
+Release pipeline:
+
+- CI workflow: `.github/workflows/ci.yml`
+- Release workflow: `.github/workflows/release-artifacts.yml`
+- Tag-based release trigger: `v*`
+
+## Monorepo Layout
+
+- `packages/core` shared runtime, tools, services
+- `packages/cli` terminal interface
+- `packages/api` local OpenAI-compatible API
+- `packages/desktop` Electron + React app
+- `site` Vercel-ready marketing/download page
+
+## Jarvis vs Ollama
+
+- Ollama is the local model runtime
+- Jarvis is the product layer on top:
+  - UX surfaces (CLI/Desktop/API)
+  - Agent tools + workflows
+  - Obsidian integration + local RAG
+  - Config/transcripts and packaging
+
+## Contributing
+
+Contributions are very welcome. If you want to help make local AI tools better, join in.
+
+### High-impact areas right now
+
+- Performance optimization for desktop + agent loops
+- Better model routing/default selection logic
+- Security hardening with feature parity preserved
+- Windows/Linux packaging polish and installer UX
+- RAG quality and retrieval tuning
+- Documentation, onboarding, and examples
+
+### How to contribute
+
+1. Fork and clone the repo
+2. Create a branch: `git checkout -b feat/your-change`
+3. Run checks locally (`lint`, `typecheck`, `test`, smoke)
+4. Open a PR with a clear description and screenshots/logs where relevant
+
+If you want to contribute but don’t know where to start, open an issue and say you want a "good first task" and we’ll give you one.
+
+## Community Call
+
+If Terminal Jarvis is useful to you, please star the repo, open issues, and send PRs.
+The goal is to build a serious local-first assistant that people can trust and extend.
