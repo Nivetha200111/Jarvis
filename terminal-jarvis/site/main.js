@@ -227,10 +227,30 @@ const initializeImmersiveDemo = () => {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   let runId = 0
   let replayTimer
+  let running = false
+  const pendingTimeouts = new Set()
 
-  const wait = (ms) =>
+  const scheduleTimeout = (callback, ms) => {
+    const timeoutId = window.setTimeout(() => {
+      pendingTimeouts.delete(timeoutId)
+      callback()
+    }, ms)
+    pendingTimeouts.add(timeoutId)
+    return timeoutId
+  }
+
+  const clearPendingTimeouts = () => {
+    for (const timeoutId of pendingTimeouts) {
+      window.clearTimeout(timeoutId)
+    }
+    pendingTimeouts.clear()
+  }
+
+  const wait = (ms, token) =>
     new Promise((resolve) => {
-      window.setTimeout(resolve, ms)
+      scheduleTimeout(() => {
+        resolve(token === runId)
+      }, ms)
     })
 
   const stopReplayTimer = () => {
@@ -238,6 +258,10 @@ const initializeImmersiveDemo = () => {
       window.clearTimeout(replayTimer)
       replayTimer = undefined
     }
+  }
+
+  const setStatus = (value) => {
+    statusText.textContent = value
   }
 
   const scrollChatToBottom = () => {
@@ -249,6 +273,9 @@ const initializeImmersiveDemo = () => {
     node.className = `demo-msg demo-msg--${variant}`
     node.textContent = text
     chat.appendChild(node)
+    while (chat.childElementCount > 14) {
+      chat.removeChild(chat.firstChild)
+    }
     scrollChatToBottom()
     return node
   }
@@ -269,88 +296,130 @@ const initializeImmersiveDemo = () => {
 
   const typeInput = async (text, token) => {
     inputText.textContent = ''
+
     if (reducedMotion) {
       inputText.textContent = text
-      return
+      return token === runId
     }
 
     for (const char of text) {
       if (token !== runId) {
-        return
+        return false
       }
       inputText.textContent += char
-      await wait(16 + Math.floor(Math.random() * 14))
+      const stillCurrent = await wait(18, token)
+      if (!stillCurrent) {
+        return false
+      }
     }
+
+    return token === runId
   }
 
   const streamAnswer = async (text, token) => {
-    const node = addMessage('assistant', '')
+    const node = addMessage('assistant', 'jarvis> ')
+
     if (reducedMotion) {
       node.textContent = `jarvis> ${text}`
-      return
+      return token === runId
     }
 
-    const full = `jarvis> ${text}`
-    for (let i = 0; i < full.length; i += 1) {
+    const chunks = text.split(/(\s+)/).filter(Boolean)
+    for (const chunk of chunks) {
       if (token !== runId) {
-        return
+        return false
       }
-      node.textContent += full[i] ?? ''
-      if (i % 2 === 0) {
-        scrollChatToBottom()
+      node.textContent += chunk
+      scrollChatToBottom()
+      const stillCurrent = await wait(chunk.trim().length === 0 ? 14 : 44, token)
+      if (!stillCurrent) {
+        return false
       }
-      await wait(8 + Math.floor(Math.random() * 8))
     }
+
+    return token === runId
   }
 
   const run = async () => {
     runId += 1
     const token = runId
+    running = true
     stopReplayTimer()
+    clearPendingTimeouts()
 
-    chat.innerHTML = ''
+    chat.replaceChildren()
     inputText.textContent = ''
     addMessage('thinking', '~ live simulation started')
 
     for (const step of steps) {
       if (token !== runId) {
+        running = false
         return
       }
 
       applyState(step)
-      statusText.textContent = 'typing...'
-      await typeInput(step.prompt, token)
+      setStatus('typing...')
 
-      if (token !== runId) {
+      const typed = await typeInput(step.prompt, token)
+      if (!typed) {
+        running = false
         return
       }
 
       addMessage('user', `you> ${step.prompt}`)
       inputText.textContent = ''
 
-      statusText.textContent = 'retrieving context...'
+      setStatus('retrieving context...')
       addMessage('thinking', `~ ${step.context}`)
-      await wait(reducedMotion ? 120 : 650)
-
-      if (token !== runId) {
+      const contextWait = await wait(reducedMotion ? 120 : 520, token)
+      if (!contextWait) {
+        running = false
         return
       }
 
-      statusText.textContent = 'generating...'
-      await streamAnswer(step.answer, token)
-      statusText.textContent = 'ready'
+      setStatus('generating...')
+      const streamed = await streamAnswer(step.answer, token)
+      if (!streamed) {
+        running = false
+        return
+      }
 
-      await wait(reducedMotion ? 120 : 850)
+      setStatus('ready')
+      const loopWait = await wait(reducedMotion ? 160 : 900, token)
+      if (!loopWait) {
+        running = false
+        return
+      }
     }
 
-    statusText.textContent = 'replaying...'
-    replayTimer = window.setTimeout(() => {
+    if (token !== runId) {
+      running = false
+      return
+    }
+
+    setStatus('replaying...')
+    replayTimer = scheduleTimeout(() => {
       void run()
-    }, reducedMotion ? 1200 : 2400)
+    }, reducedMotion ? 1200 : 2200)
+    running = false
   }
 
   replayButton.addEventListener('click', () => {
     void run()
+  })
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      if (!running) {
+        void run()
+      }
+      return
+    }
+
+    runId += 1
+    stopReplayTimer()
+    clearPendingTimeouts()
+    setStatus('paused')
   })
 
   void run()
