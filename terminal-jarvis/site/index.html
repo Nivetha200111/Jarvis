@@ -90,8 +90,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 
           <div class="step">
             <div class="step-num">02</div>
-            <h3>Pull models (chat + retrieval)</h3>
-            <p>Jarvis works with any Ollama chat model. For best agent mode and speed, use qwen2.5 variants. For local RAG, add an embedding model.</p>
+            <h3>Model setup (automatic)</h3>
+            <p>No manual model pull needed. The installer/launcher provisions chat + retrieval models on first run.</p>
             <div class="code-block">
               <div class="code-header">
                 <span class="code-dot"></span>
@@ -99,26 +99,17 @@ curl -fsSL https://ollama.com/install.sh | sh
                 <span class="code-dot"></span>
                 <span class="code-title">terminal</span>
               </div>
-              <pre><code><span class="c-dim"># Recommended chat models (fast + tool-capable)</span>
-ollama pull qwen2.5:3b
-ollama pull qwen2.5:1.5b
-
-<span class="c-dim"># Optional retrieval model (for RAG)</span>
-ollama pull nomic-embed-text
-
-<span class="c-dim"># Other chat alternatives</span>
-ollama pull qwen2.5
-ollama pull llama3.2
-ollama pull mistral
-ollama pull gemma2</code></pre>
+              <pre><code><span class="c-dim"># Auto-pulled by the installer on first launch:</span>
+qwen2.5:3b    <span class="c-dim"># preferred fast agent model</span>
+qwen2.5:1.5b  <span class="c-dim"># fallback</span>
+qwen2.5       <span class="c-dim"># fallback</span>
+nomic-embed-text <span class="c-dim"># local RAG embeddings</span></code></pre>
             </div>
             <div class="model-tags">
-              <span class="model-tag tag-agentic">qwen2.5:3b &mdash; fast agentic</span>
+              <span class="model-tag tag-agentic">qwen2.5:3b &mdash; auto default</span>
               <span class="model-tag">qwen2.5:1.5b &mdash; fastest</span>
+              <span class="model-tag">qwen2.5 &mdash; fallback</span>
               <span class="model-tag">nomic-embed-text &mdash; RAG</span>
-              <span class="model-tag">llama3.2 &mdash; general</span>
-              <span class="model-tag">mistral &mdash; fast</span>
-              <span class="model-tag">gemma2 &mdash; compact</span>
             </div>
           </div>
 

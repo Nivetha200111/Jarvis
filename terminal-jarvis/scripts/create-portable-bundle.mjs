@@ -58,7 +58,7 @@ Quick start:
    (The launcher auto-pulls required models on first run)
 
 What gets set up automatically:
-- qwen2.5 — main chat/agent model
+- qwen2.5:3b (or qwen2.5:1.5b, then qwen2.5 fallback) — main chat/agent model
 - nomic-embed-text — local embeddings for RAG (knowledge base)
 
 Notes:
@@ -80,18 +80,41 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export JARVIS_ENGINE="\${JARVIS_ENGINE:-auto}"
 unset ELECTRON_RUN_AS_NODE
 
-# Auto-setup: ensure Ollama has the embedding model for RAG
-if command -v ollama &>/dev/null; then
-  echo "[jarvis] Checking embedding model..."
-  if ! ollama show nomic-embed-text &>/dev/null 2>&1; then
+# Auto-setup: ensure Ollama has required models
+if command -v ollama >/dev/null 2>&1; then
+  echo "[jarvis] Checking Ollama models..."
+
+  if ! ollama show nomic-embed-text >/dev/null 2>&1; then
     echo "[jarvis] Pulling nomic-embed-text for local RAG..."
-    ollama pull nomic-embed-text || echo "[jarvis] Warning: could not pull embedding model. RAG will be unavailable."
+    ollama pull nomic-embed-text || echo "[jarvis] Warning: could not pull nomic-embed-text. RAG may be unavailable."
   fi
-  # Also ensure a default chat model exists
-  if ! ollama show qwen2.5 &>/dev/null 2>&1; then
-    echo "[jarvis] Pulling qwen2.5 (default model)..."
-    ollama pull qwen2.5 || true
+
+  CHAT_MODEL=""
+  for CANDIDATE in qwen2.5:3b qwen2.5:1.5b qwen2.5; do
+    if ollama show "$CANDIDATE" >/dev/null 2>&1; then
+      CHAT_MODEL="$CANDIDATE"
+      break
+    fi
+  done
+
+  if [ -z "$CHAT_MODEL" ]; then
+    for CANDIDATE in qwen2.5:3b qwen2.5:1.5b qwen2.5; do
+      echo "[jarvis] Pulling $CANDIDATE..."
+      if ollama pull "$CANDIDATE"; then
+        CHAT_MODEL="$CANDIDATE"
+        break
+      fi
+      echo "[jarvis] Warning: failed to pull $CANDIDATE"
+    done
   fi
+
+  if [ -n "$CHAT_MODEL" ]; then
+    echo "[jarvis] Chat model ready: $CHAT_MODEL"
+  else
+    echo "[jarvis] Warning: no chat model available from auto-setup list."
+  fi
+else
+  echo "[jarvis] Ollama not found. Jarvis will run with mock fallback until Ollama is installed."
 fi
 
 "$SCRIPT_DIR/electron/electron" "$SCRIPT_DIR/app/main.cjs"
@@ -104,26 +127,50 @@ fi
 
   const batch = `@echo off
 setlocal
-set SCRIPT_DIR=%~dp0
-if "%JARVIS_ENGINE%"=="" set JARVIS_ENGINE=auto
-set ELECTRON_RUN_AS_NODE=
+set "SCRIPT_DIR=%~dp0"
+if "%JARVIS_ENGINE%"=="" set "JARVIS_ENGINE=auto"
+set "ELECTRON_RUN_AS_NODE="
+set "CHAT_MODEL="
 
-REM Auto-setup: ensure Ollama has the embedding model for RAG
+REM Auto-setup: ensure Ollama has required models
 where ollama >nul 2>&1
-if %errorlevel%==0 (
-  echo [jarvis] Checking embedding model...
-  ollama show nomic-embed-text >nul 2>&1
-  if %errorlevel% neq 0 (
-    echo [jarvis] Pulling nomic-embed-text for local RAG...
-    ollama pull nomic-embed-text
-  )
-  ollama show qwen2.5 >nul 2>&1
-  if %errorlevel% neq 0 (
-    echo [jarvis] Pulling qwen2.5 default model...
-    ollama pull qwen2.5
+if errorlevel 1 (
+  echo [jarvis] Ollama not found. Jarvis will run with mock fallback until Ollama is installed.
+  goto launch
+)
+
+echo [jarvis] Checking Ollama models...
+ollama show nomic-embed-text >nul 2>&1
+if errorlevel 1 (
+  echo [jarvis] Pulling nomic-embed-text for local RAG...
+  ollama pull nomic-embed-text >nul 2>&1
+  if errorlevel 1 echo [jarvis] Warning: could not pull nomic-embed-text. RAG may be unavailable.
+)
+
+for %%M in (qwen2.5:3b qwen2.5:1.5b qwen2.5) do (
+  if not defined CHAT_MODEL (
+    ollama show %%M >nul 2>&1
+    if not errorlevel 1 set "CHAT_MODEL=%%M"
   )
 )
 
+if not defined CHAT_MODEL (
+  for %%M in (qwen2.5:3b qwen2.5:1.5b qwen2.5) do (
+    if not defined CHAT_MODEL (
+      echo [jarvis] Pulling %%M...
+      ollama pull %%M >nul 2>&1
+      if not errorlevel 1 set "CHAT_MODEL=%%M"
+    )
+  )
+)
+
+if defined CHAT_MODEL (
+  echo [jarvis] Chat model ready: %CHAT_MODEL%
+) else (
+  echo [jarvis] Warning: no chat model available from auto-setup list.
+)
+
+:launch
 "%SCRIPT_DIR%electron\\electron.exe" "%SCRIPT_DIR%app\\main.cjs"
 `
   await writeFile(join(bundlePath, 'run-jarvis.bat'), batch, 'utf8')
