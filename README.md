@@ -11,6 +11,8 @@ Core docs:
 - Security policy: [`SECURITY.md`](./SECURITY.md)
 - Code of conduct: [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
 - Changelog: [`CHANGELOG.md`](./CHANGELOG.md)
+- Wiki source: [`wiki/Home.md`](./wiki/Home.md)
+- GitHub Wiki (after enablement): `https://github.com/Nivetha200111/Jarvis/wiki`
 
 Marketing/download page source (Vercel-ready):
 - `/home/nivetha/Jarvis/terminal-jarvis/site`
