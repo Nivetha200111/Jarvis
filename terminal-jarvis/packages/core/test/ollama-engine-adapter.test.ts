@@ -4,6 +4,7 @@ import { createModelManager } from '../src/services/model-manager.js'
 import { createOllamaEngineAdapter } from '../src/engine/ollama-engine-adapter.js'
 
 const originalFetch = globalThis.fetch
+const originalAllowRemote = process.env.JARVIS_ALLOW_REMOTE_OLLAMA
 
 const TEST_MODEL: ModelInfo = {
   id: 'qwen2.5:1.5b',
@@ -16,6 +17,7 @@ const TEST_MODEL: ModelInfo = {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  process.env.JARVIS_ALLOW_REMOTE_OLLAMA = originalAllowRemote
   vi.restoreAllMocks()
 })
 
@@ -101,5 +103,22 @@ describe('ollama-engine-adapter', () => {
 
     const iterator = adapter.generate([{ role: 'user', content: 'timeout please' }])
     await expect(iterator.next()).rejects.toThrow(/timed out/i)
+  })
+
+  it('rejects non-local Ollama endpoints unless explicitly allowed', () => {
+    const modelManager = createModelManager({
+      seedModels: [TEST_MODEL]
+    })
+
+    expect(() => createOllamaEngineAdapter({
+      modelManager,
+      baseUrl: 'http://192.168.1.20:11434'
+    })).toThrow(/Refusing non-local Ollama endpoint/i)
+
+    process.env.JARVIS_ALLOW_REMOTE_OLLAMA = '1'
+    expect(() => createOllamaEngineAdapter({
+      modelManager,
+      baseUrl: 'http://192.168.1.20:11434'
+    })).not.toThrow()
   })
 })

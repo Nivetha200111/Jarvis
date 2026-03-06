@@ -29,6 +29,16 @@ interface OllamaStreamEvent {
   eval_count?: number
 }
 
+const isLocalOllamaUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value)
+    const host = parsed.hostname.toLowerCase()
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+  } catch {
+    return false
+  }
+}
+
 const toOllamaMessageRole = (role: ChatMessage['role']): 'system' | 'user' | 'assistant' | 'tool' => {
   if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') {
     return role
@@ -83,6 +93,12 @@ export class OllamaEngineAdapter implements EngineAdapter {
     const timeoutFromEnv = Number.parseInt(process.env.JARVIS_OLLAMA_TIMEOUT_MS ?? '', 10)
     this.requestTimeoutMs = options.requestTimeoutMs
       ?? (Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 180_000)
+
+    if (process.env.JARVIS_ALLOW_REMOTE_OLLAMA !== '1' && !isLocalOllamaUrl(this.baseUrl)) {
+      throw new Error(
+        'Refusing non-local Ollama endpoint in privacy-first mode. Set JARVIS_ALLOW_REMOTE_OLLAMA=1 to override.'
+      )
+    }
   }
 
   private createAbortController(): { controller: AbortController; timeout: ReturnType<typeof setTimeout> } {

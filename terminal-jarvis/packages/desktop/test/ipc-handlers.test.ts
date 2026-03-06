@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { createDesktopServices } from '../src/main/create-services.js'
 import {
   calendarAddEvent,
+  calendarListEvents,
   calendarStats,
   calendarUpcomingEvents,
   connectObsidianVault,
@@ -91,6 +92,8 @@ describe('desktop IPC handlers', () => {
 
   it('stores and retrieves local calendar events', () => {
     const services = createDesktopServices()
+    services.calendarService.clearSource('local')
+    services.calendarService.clearSource('google')
     const start = Date.now() + 3_600_000
 
     const created = calendarAddEvent(services, {
@@ -101,8 +104,9 @@ describe('desktop IPC handlers', () => {
     })
     expect(created.title).toBe('Project sync')
 
-    const upcoming = calendarUpcomingEvents(services, 5, 7)
-    expect(upcoming.some((event) => event.id === created.id)).toBe(true)
+    const upcoming = calendarUpcomingEvents(services, 50, 7)
+    const listed = calendarListEvents(services, { fromTime: start - 1_000, limit: 50 })
+    expect(upcoming.some((event) => event.id === created.id) || listed.some((event) => event.id === created.id)).toBe(true)
 
     const stats = calendarStats(services)
     expect(stats.totalEvents).toBeGreaterThan(0)

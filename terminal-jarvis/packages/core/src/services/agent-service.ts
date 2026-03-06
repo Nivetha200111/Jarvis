@@ -3,6 +3,7 @@ import type { ModelManager } from './model-manager.js'
 import type { ObsidianVaultService } from './obsidian-vault.js'
 import type { RagService } from './rag-service.js'
 import type { CalendarService } from './calendar-service.js'
+import { compactChatMessages, derivePromptBudgetChars } from './prompt-compactor.js'
 import type { SystemToolCallbacks } from '../tools/index.js'
 import { createAgentTools, executeTool } from '../tools/index.js'
 
@@ -146,6 +147,7 @@ export const createAgentService = (
     ]
 
     let toolsSupported = true
+    const promptBudgetChars = derivePromptBudgetChars(resolved?.contextLength ?? 0, 768)
 
     for (let round = 0; round < MAX_ROUNDS; round++) {
       let fullContent = ''
@@ -161,7 +163,11 @@ export const createAgentService = (
             system: options.system
           })
           : []
-        for await (const event of engine.streamChatWithTools(messages, tools)) {
+        const compactedRound = compactChatMessages(messages, {
+          maxInputChars: promptBudgetChars,
+          latestUserHint: lastUserMsg?.content
+        })
+        for await (const event of engine.streamChatWithTools(compactedRound.messages, tools)) {
           if (event.type === 'token') {
             if (isFirstTokenInRound && round === 0) {
               // Could be final text or thinking — stream it either way
@@ -179,7 +185,11 @@ export const createAgentService = (
         if (msg.includes('does not support tools') || msg.includes('400')) {
           toolsSupported = false
           // Retry this round without tools
-          for await (const event of engine.streamChatWithTools(messages, [])) {
+          const compactedRound = compactChatMessages(messages, {
+            maxInputChars: promptBudgetChars,
+            latestUserHint: lastUserMsg?.content
+          })
+          for await (const event of engine.streamChatWithTools(compactedRound.messages, [])) {
             if (event.type === 'token') {
               yield { type: 'stream_token', token: event.token }
             }

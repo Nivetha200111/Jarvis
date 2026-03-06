@@ -27,6 +27,9 @@ export type { TranscriptStore } from './services/transcript-store.js'
 export { createChatService } from './services/chat-service.js'
 export type { ChatService } from './services/chat-service.js'
 
+export { compactChatMessages, derivePromptBudgetChars } from './services/prompt-compactor.js'
+export type { PromptCompactionOptions, PromptCompactionResult } from './services/prompt-compactor.js'
+
 export { createMockEngineAdapter, MockEngineAdapter } from './engine/mock-engine-adapter.js'
 export { createOllamaEngineAdapter, OllamaEngineAdapter } from './engine/ollama-engine-adapter.js'
 

@@ -1,6 +1,7 @@
 import type { EngineAdapter, GenerationOptions, ChatCompletionRequest, ChatMessage, UsageStats } from '../types/index.js'
 import type { ConfigManager } from './config-manager.js'
 import type { ModelManager } from './model-manager.js'
+import { compactChatMessages, derivePromptBudgetChars } from './prompt-compactor.js'
 import type { TranscriptStore } from './transcript-store.js'
 
 export interface ChatService {
@@ -36,11 +37,14 @@ export const createChatService = (deps: ChatServiceDeps): ChatService => {
     await engine.loadModel(resolvedModel.id)
 
     const inputMessages = cloneMessages(request.messages)
+    const compactedInput = compactChatMessages(inputMessages, {
+      maxInputChars: derivePromptBudgetChars(resolvedModel.contextLength, request.max_tokens)
+    })
     const conversation = transcriptStore.createConversation(resolvedModel.id, inputMessages)
 
     let assistantContent = ''
 
-    for await (const chunk of engine.generate(inputMessages, toGenerationOptions(request))) {
+    for await (const chunk of engine.generate(compactedInput.messages, toGenerationOptions(request))) {
       assistantContent += chunk.token
       yield chunk
     }

@@ -13,6 +13,7 @@ Terminal Jarvis is designed for people who want local control, local data, and p
 - Local RAG retrieval from indexed files/notes
 - Optional live screen vision mode (vision-capable Ollama models)
 - Streaming output with queued prompts
+- Deterministic prompt compaction for faster long sessions
 - Agent tools for shell/files/system actions
 - Linux + Windows portable release bundles
 
@@ -89,9 +90,36 @@ Then restart desktop and click `Google Sync` once.
   - Accepts `Authorization: Bearer <key>` or `x-api-key`
 - CORS defaults to local browser origins when `JARVIS_CORS_ORIGIN` is unset
 - If you set permissive CORS (`*`/`true`), Jarvis logs a security warning
+- Ollama is local-only by default
+  - Jarvis refuses non-local `OLLAMA_BASE_URL` values unless `JARVIS_ALLOW_REMOTE_OLLAMA=1`
 - Agent mode has intentionally high local privileges (shell/files/system tools)
   - Jarvis logs a warning because this cannot be fully sandboxed without removing core features
 - Suppress warnings with `JARVIS_SUPPRESS_SECURITY_WARNINGS=1`
+
+## Performance
+
+- Long prompts are compacted locally before inference
+- Older turns are folded into a deterministic memory block
+- Retrieved vault/RAG/schedule context is deduplicated and trimmed against the latest user request
+- This keeps sessions faster without sending data to any external summarizer
+
+## Private Beta Status
+
+Terminal Jarvis is now a serious private-beta candidate:
+
+- local-only defaults are enforced
+- long sessions are faster because prompts are compacted before inference
+- vault, calendar, agent tools, and desktop flows are integrated into one product
+
+It is not finished.
+The remaining work for a strong paid product is onboarding quality, retrieval accuracy, reliability under repeated use, and installer polish.
+
+## Monetization Path
+
+If you want to turn Jarvis into a business, do not sell "a local chatbot".
+Sell a private local productivity system with strong workflows and predictable privacy.
+
+Roadmap: `docs/monetization-roadmap.md`
 
 ## Local-First Paths
 
