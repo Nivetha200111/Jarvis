@@ -1,8 +1,27 @@
 # Jarvis
-It runs offline using GGUF models via llama.cpp, with both a terminal REPL and a desktop UI. It includes model management, streaming responses, local transcript persistence, optional GPU acceleration, and a REST-style API for external integrations — essentially making it usable as a local inference backend for other apps.
 
-Project scaffold and active development workspace:
-`/home/nivetha/Jarvis/terminal-jarvis`
+Local-first AI assistant with terminal, desktop, and API interfaces.
 
-Marketing/download page (Vercel-ready):
-`/home/nivetha/Jarvis/terminal-jarvis/site`
+Active project workspace:
+- `/home/nivetha/Jarvis/terminal-jarvis`
+
+Core docs:
+- Project README: [`terminal-jarvis/README.md`](./terminal-jarvis/README.md)
+- Contributing guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](./SECURITY.md)
+- Code of conduct: [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+- Changelog: [`CHANGELOG.md`](./CHANGELOG.md)
+
+Marketing/download page source (Vercel-ready):
+- `/home/nivetha/Jarvis/terminal-jarvis/site`
+
+## Open Source
+
+This project is open source under the MIT license.
+
+If you want to contribute, please:
+1. Read `CONTRIBUTING.md`
+2. Pick or open an issue
+3. Submit a PR
+
+Contributions are welcome across performance, security, docs, packaging, and UX.

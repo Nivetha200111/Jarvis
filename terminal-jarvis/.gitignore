@@ -15,3 +15,8 @@ packages/desktop/.electron
 
 # Local data
 .jarvis
+
+# Local env overrides
+.env
+.env.local
+.env.*.local
