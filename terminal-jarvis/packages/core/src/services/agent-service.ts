@@ -8,6 +8,7 @@ import { createAgentTools, executeTool } from '../tools/index.js'
 const SYSTEM_PROMPT = `You are Jarvis, a powerful agentic AI assistant running fully locally on the user's machine. You have tools to execute shell commands, read/write files, list directories, extract archives, capture screenshots, read clipboard, send notifications, open URLs, and get system information. If Obsidian tools are available, use them for vault tasks. If RAG tools are available, use rag_search to find relevant knowledge. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
 
 const MAX_ROUNDS = 15
+let hasWarnedAboutUnrestrictedTools = false
 
 export interface AgentService {
   run(modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent>
@@ -24,6 +25,14 @@ export const createAgentService = (
   modelManager: ModelManager,
   options: CreateAgentServiceOptions = {}
 ): AgentService => {
+  if (!hasWarnedAboutUnrestrictedTools && process.env.JARVIS_SUPPRESS_SECURITY_WARNINGS !== '1') {
+    console.warn(
+      '[security] Agent mode exposes powerful local tools (shell/file/system access). ' +
+      'This is intentional for feature parity; use only in trusted local environments.'
+    )
+    hasWarnedAboutUnrestrictedTools = true
+  }
+
   const run = async function* (modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent> {
     if (!engine.streamChatWithTools) {
       yield { type: 'error', message: 'Engine does not support tool calling' }

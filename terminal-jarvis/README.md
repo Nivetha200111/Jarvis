@@ -70,6 +70,14 @@ JARVIS_ENGINE=ollama npm run dev:cli
 - E2E placeholder: `npm run test:e2e`
 - Smoke checks: `npm run smoke:cli && npm run smoke:api && npm run smoke:desktop`
 
+## Security Notes
+
+- API auth: set `JARVIS_API_KEY` to require `Authorization: Bearer <key>` (or `x-api-key`) for `/v1/*` endpoints.
+- CORS defaults to local browser origins only when `JARVIS_CORS_ORIGIN` is unset.
+- If you explicitly set `JARVIS_CORS_ORIGIN=*` (or `true`), Jarvis logs a security warning because any website can call the local API from a browser.
+- Agent mode intentionally has high local privileges (shell/file/system tools). This cannot be fully sandboxed without removing core features; Jarvis logs a warning at runtime.
+- You can suppress warning logs with `JARVIS_SUPPRESS_SECURITY_WARNINGS=1`.
+
 ## Local-First Defaults
 
 Configuration defaults target `~/.jarvis` for future persistence:

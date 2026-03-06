@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { ToolDefinition } from '../types/index.js'
 import type { ObsidianVaultService } from '../services/obsidian-vault.js'
@@ -357,9 +357,15 @@ export const executeTool = async (
         const destination = String(args.destination ?? '/tmp/extracted')
         mkdirSync(destination, { recursive: true })
         if (archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
-          execSync(`tar -xzf "${archivePath}" -C "${destination}"`, { encoding: 'utf8', timeout: 30_000 })
+          execFileSync('tar', ['-xzf', archivePath, '-C', destination], {
+            encoding: 'utf8',
+            timeout: 30_000
+          })
         } else {
-          execSync(`unzip -o "${archivePath}" -d "${destination}"`, { encoding: 'utf8', timeout: 30_000 })
+          execFileSync('unzip', ['-o', archivePath, '-d', destination], {
+            encoding: 'utf8',
+            timeout: 30_000
+          })
         }
         const extracted = readdirSync(destination, { withFileTypes: true })
         const listing = extracted.map((e) => `${e.isDirectory() ? '[dir] ' : '      '}${e.name}`).join('\n')
