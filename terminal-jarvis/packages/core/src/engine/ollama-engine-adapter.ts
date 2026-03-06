@@ -14,6 +14,8 @@ import type { ModelManager } from '../services/model-manager.js'
 export interface OllamaEngineOptions {
   modelManager: ModelManager
   baseUrl?: string
+  keepAlive?: string
+  requestTimeoutMs?: number
 }
 
 interface OllamaStreamEvent {
@@ -65,6 +67,8 @@ const toSyntheticModel = (modelId: string): ModelInfo => ({
 export class OllamaEngineAdapter implements EngineAdapter {
   private readonly modelManager: ModelManager
   private readonly baseUrl: string
+  private readonly keepAlive: string
+  private readonly requestTimeoutMs: number
   private loadedModel: ModelInfo | null = null
   private usage: UsageStats = {
     promptTokens: 0,
@@ -75,6 +79,18 @@ export class OllamaEngineAdapter implements EngineAdapter {
   public constructor(options: OllamaEngineOptions) {
     this.modelManager = options.modelManager
     this.baseUrl = options.baseUrl ?? process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434'
+    this.keepAlive = options.keepAlive ?? process.env.JARVIS_OLLAMA_KEEP_ALIVE ?? '30m'
+    const timeoutFromEnv = Number.parseInt(process.env.JARVIS_OLLAMA_TIMEOUT_MS ?? '', 10)
+    this.requestTimeoutMs = options.requestTimeoutMs
+      ?? (Number.isFinite(timeoutFromEnv) && timeoutFromEnv > 0 ? timeoutFromEnv : 180_000)
+  }
+
+  private createAbortController(): { controller: AbortController; timeout: ReturnType<typeof setTimeout> } {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+      controller.abort()
+    }, this.requestTimeoutMs)
+    return { controller, timeout }
   }
 
   public async loadModel(modelId: string): Promise<ModelInfo> {
@@ -107,11 +123,13 @@ export class OllamaEngineAdapter implements EngineAdapter {
     const requestBody: {
       model: string
       stream: boolean
+      keep_alive: string
       messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string }>
       options?: Record<string, number>
     } = {
       model: this.loadedModel.id,
       stream: true,
+      keep_alive: this.keepAlive,
       messages: messages.map((message) => ({
         role: toOllamaMessageRole(message.role),
         content: message.content
@@ -123,72 +141,113 @@ export class OllamaEngineAdapter implements EngineAdapter {
       requestBody.options = mappedOptions
     }
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
-    })
+    const { controller, timeout } = this.createAbortController()
+    try {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
-    }
-
-    if (!response.body) {
-      throw new Error('Ollama response did not include a stream body')
-    }
-
-    const decoder = new TextDecoder()
-    const reader = response.body.getReader()
-
-    let buffer = ''
-    let index = 0
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
       }
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
+      if (!response.body) {
+        throw new Error('Ollama response did not include a stream body')
+      }
 
-      for (const rawLine of lines) {
-        const line = rawLine.trim()
-        if (!line) {
-          continue
-        }
+      const decoder = new TextDecoder()
+      const reader = response.body.getReader()
 
-        let event: OllamaStreamEvent
-        try {
-          event = JSON.parse(line) as OllamaStreamEvent
-        } catch {
-          continue
-        }
+      let buffer = ''
+      let index = 0
 
+      const processEvent = (event: OllamaStreamEvent): TokenChunk | null => {
         const content = event.message?.content ?? ''
         if (content) {
           index += 1
-          yield {
+          return {
             token: content,
             index,
             done: Boolean(event.done)
           }
         }
+        return null
+      }
 
-        if (event.done) {
-          const promptTokens = event.prompt_eval_count ?? 0
-          const completionTokens = event.eval_count ?? index
-          this.usage = {
-            promptTokens,
-            completionTokens,
-            totalTokens: promptTokens + completionTokens
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) {
+            continue
+          }
+
+          let event: OllamaStreamEvent
+          try {
+            event = JSON.parse(line) as OllamaStreamEvent
+          } catch {
+            continue
+          }
+
+          const chunk = processEvent(event)
+          if (chunk) {
+            yield chunk
+          }
+
+          if (event.done) {
+            const promptTokens = event.prompt_eval_count ?? 0
+            const completionTokens = event.eval_count ?? index
+            this.usage = {
+              promptTokens,
+              completionTokens,
+              totalTokens: promptTokens + completionTokens
+            }
           }
         }
       }
+
+      const tailLine = buffer.trim()
+      if (tailLine) {
+        try {
+          const event = JSON.parse(tailLine) as OllamaStreamEvent
+          const chunk = processEvent(event)
+          if (chunk) {
+            yield chunk
+          }
+          if (event.done) {
+            const promptTokens = event.prompt_eval_count ?? 0
+            const completionTokens = event.eval_count ?? index
+            this.usage = {
+              promptTokens,
+              completionTokens,
+              totalTokens: promptTokens + completionTokens
+            }
+          }
+        } catch {
+          // ignore trailing non-JSON tail
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Ollama request timed out after ${this.requestTimeoutMs}ms`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
@@ -201,6 +260,7 @@ export class OllamaEngineAdapter implements EngineAdapter {
     const requestBody = {
       model: this.loadedModel.id,
       stream: false,
+      keep_alive: this.keepAlive,
       messages: messages.map((message) => {
         const mapped: Record<string, unknown> = {
           role: toOllamaMessageRole(message.role),
@@ -214,25 +274,36 @@ export class OllamaEngineAdapter implements EngineAdapter {
       tools
     }
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    })
+    const { controller, timeout } = this.createAbortController()
+    try {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
-    }
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
+      }
 
-    const data = (await response.json()) as {
-      message?: { content?: string; tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }> }
-    }
-    const msg = data.message ?? {}
+      const data = (await response.json()) as {
+        message?: { content?: string; tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }> }
+      }
+      const msg = data.message ?? {}
 
-    return {
-      content: msg.content ?? '',
-      toolCalls: msg.tool_calls
+      return {
+        content: msg.content ?? '',
+        toolCalls: msg.tool_calls
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Ollama request timed out after ${this.requestTimeoutMs}ms`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
     }
   }
 
@@ -245,6 +316,7 @@ export class OllamaEngineAdapter implements EngineAdapter {
     const requestBody = {
       model: this.loadedModel.id,
       stream: true,
+      keep_alive: this.keepAlive,
       messages: messages.map((message) => {
         const mapped: Record<string, unknown> = {
           role: toOllamaMessageRole(message.role),
@@ -258,59 +330,91 @@ export class OllamaEngineAdapter implements EngineAdapter {
       ...(tools.length > 0 ? { tools } : {})
     }
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    })
+    const { controller, timeout } = this.createAbortController()
+    try {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
-    }
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Ollama request failed (${response.status}): ${errorText}`)
+      }
 
-    if (!response.body) {
-      throw new Error('Ollama response did not include a stream body')
-    }
+      if (!response.body) {
+        throw new Error('Ollama response did not include a stream body')
+      }
 
-    const decoder = new TextDecoder()
-    const reader = response.body.getReader()
-    let buffer = ''
-    let fullContent = ''
-    let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> | undefined
+      const decoder = new TextDecoder()
+      const reader = response.body.getReader()
+      let buffer = ''
+      let fullContent = ''
+      let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> | undefined
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim()
-        if (!line) continue
-
-        let event: OllamaStreamEvent
-        try {
-          event = JSON.parse(line) as OllamaStreamEvent
-        } catch {
-          continue
-        }
-
+      const processEvent = (event: OllamaStreamEvent): void => {
         const content = event.message?.content ?? ''
         if (content) {
           fullContent += content
-          yield { type: 'token', token: content }
         }
 
         if (event.message?.tool_calls) {
           toolCalls = event.message.tool_calls
         }
       }
-    }
 
-    yield { type: 'complete', content: fullContent, toolCalls }
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) continue
+
+          let event: OllamaStreamEvent
+          try {
+            event = JSON.parse(line) as OllamaStreamEvent
+          } catch {
+            continue
+          }
+
+          processEvent(event)
+          const content = event.message?.content ?? ''
+          if (content) {
+            yield { type: 'token', token: content }
+          }
+        }
+      }
+
+      const tailLine = buffer.trim()
+      if (tailLine) {
+        try {
+          const event = JSON.parse(tailLine) as OllamaStreamEvent
+          processEvent(event)
+          const content = event.message?.content ?? ''
+          if (content) {
+            yield { type: 'token', token: content }
+          }
+        } catch {
+          // ignore trailing non-JSON tail
+        }
+      }
+
+      yield { type: 'complete', content: fullContent, toolCalls }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Ollama request timed out after ${this.requestTimeoutMs}ms`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 }
 

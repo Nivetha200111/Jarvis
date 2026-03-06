@@ -7,6 +7,7 @@ import type {
   ObsidianNoteSummary,
   ObsidianSearchHit,
   ObsidianWriteResult,
+  RagResult,
   RagStats
 } from '@jarvis/core'
 import type { ChatSendResponse, StreamEvent, AgentStreamEvent } from '../main/ipc-handlers.js'
@@ -34,6 +35,7 @@ export interface PreloadApi {
   obsidianReadNote(path: string): Promise<string>
   obsidianWriteNote(path: string, content: string, mode?: 'overwrite' | 'append'): Promise<ObsidianWriteResult>
   ragIndex(source: string, text: string): Promise<number>
+  ragSearch(query: string, limit?: number): Promise<RagResult[]>
   ragStats(): Promise<RagStats>
   ragRemove(source: string): Promise<number>
   // Window controls
@@ -88,6 +90,7 @@ const api: PreloadApi = {
   obsidianReadNote: (path) => ipcRenderer.invoke('obsidian:read', { path }),
   obsidianWriteNote: (path, content, mode) => ipcRenderer.invoke('obsidian:write', { path, content, mode }),
   ragIndex: (source, text) => ipcRenderer.invoke('rag:index', { source, text }),
+  ragSearch: (query, limit) => ipcRenderer.invoke('rag:search', { query, limit }),
   ragStats: () => ipcRenderer.invoke('rag:stats'),
   ragRemove: (source) => ipcRenderer.invoke('rag:remove', { source }),
   // Window

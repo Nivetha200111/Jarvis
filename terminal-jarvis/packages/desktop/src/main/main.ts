@@ -13,6 +13,7 @@ import {
   listModels,
   listObsidianNotes,
   ragIndex,
+  ragSearch,
   ragRemoveSource,
   ragStats,
   readObsidianNote,
@@ -212,6 +213,9 @@ const registerIpc = (): void => {
 
   ipcMain.handle('rag:index', async (_event, payload: { source: string; text: string }) =>
     ragIndex(services, payload.source, payload.text)
+  )
+  ipcMain.handle('rag:search', async (_event, payload: { query: string; limit?: number }) =>
+    ragSearch(services, payload.query, payload.limit)
   )
   ipcMain.handle('rag:stats', async () => ragStats(services))
   ipcMain.handle('rag:remove', async (_event, payload: { source: string }) =>

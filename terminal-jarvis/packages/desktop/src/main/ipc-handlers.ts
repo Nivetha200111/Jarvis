@@ -6,7 +6,8 @@ import type {
   ObsidianNoteSummary,
   ObsidianSearchHit,
   ObsidianWriteResult,
-  RagStats
+  RagStats,
+  RagResult
 } from '@jarvis/core'
 import type { DesktopServices } from './create-services.js'
 
@@ -131,6 +132,12 @@ export const ragIndex = async (
 
 export const ragStats = (services: DesktopServices): RagStats =>
   services.ragService.getStats()
+
+export const ragSearch = async (
+  services: DesktopServices,
+  query: string,
+  limit?: number
+): Promise<RagResult[]> => services.ragService.retrieve(query, limit)
 
 export const ragRemoveSource = (services: DesktopServices, source: string): number =>
   services.ragService.removeSource(source)

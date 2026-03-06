@@ -11,13 +11,15 @@ const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
 }
 const ENDING_INTENT_PATTERN = /\b(end|ending|ends|final|last|conclusion|epilogue|finish)\b/i
 const CONTEXT_BUDGET_CHARS = 7_000
-const FALLBACK_NOTE_SCAN_LIMIT = 2_000
+const FALLBACK_NOTE_SCAN_LIMIT = 600
 const BROAD_CONTEXT_NOTE_LIMIT = 8
 const MATCH_CONTEXT_NOTE_LIMIT = 3
+const RAG_CONTEXT_CHUNK_LIMIT = 5
 const TOKEN_FLUSH_INTERVAL_MS = 40
 const STREAM_STALL_TIMEOUT_MS = 90_000
 const VAULT_INDEX_NOTE_LIMIT = 2_000
 const VAULT_INDEX_IDLE_DELAY_MS = 120
+const VAULT_INDEX_TEXT_MAX_CHARS = 36_000
 
 const delay = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -51,6 +53,30 @@ const toVaultSourceKey = (notePath: string, updatedAt: number): string =>
 
 const toVaultSourcePrefix = (notePath: string): string =>
   `vault:${notePath}@`
+
+const trimRagSourceLabel = (source: string): string =>
+  source
+    .replace(/^vault:/, '')
+    .replace(/@\d+$/u, '')
+
+const toRagExcerpt = (text: string, maxChars = 800): string => {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxChars)}...`
+}
+
+const toIndexableText = (content: string, maxChars = VAULT_INDEX_TEXT_MAX_CHARS): string => {
+  const normalized = content.trim()
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+
+  const headChars = Math.floor(maxChars * 0.72)
+  const tailChars = maxChars - headChars
+  return `${normalized.slice(0, headChars)}\n...\n${normalized.slice(-tailChars)}`
+}
 
 const createContextExcerpt = (
   content: string,
@@ -689,7 +715,12 @@ export const App = () => {
             continue
           }
 
-          const chunksAdded = await window.jarvis.ragIndex(sourceKey, content).catch(() => 0)
+          const indexableText = toIndexableText(content)
+          if (!indexableText) {
+            continue
+          }
+
+          const chunksAdded = await window.jarvis.ragIndex(sourceKey, indexableText).catch(() => 0)
           if (chunksAdded > 0) {
             indexedSources.add(sourceKey)
           }
@@ -750,84 +781,124 @@ export const App = () => {
 
   const buildPromptWithVaultContext = useCallback(async (
     userPrompt: string
-  ): Promise<{ content: string; matchCount: number; fallbackUsed: boolean; notePaths: string[] }> => {
+  ): Promise<{
+    content: string
+    matchCount: number
+    notePaths: string[]
+    mode: 'none' | 'keyword' | 'rag' | 'broad'
+  }> => {
     if (!useVaultContext || !vaultStatus.connected) {
-      return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
+      return { content: userPrompt, matchCount: 0, notePaths: [], mode: 'none' }
     }
     try {
       const endingIntent = ENDING_INTENT_PATTERN.test(userPrompt)
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
-      if (matches.length === 0) {
-        const notes = await window.jarvis.obsidianListNotes(FALLBACK_NOTE_SCAN_LIMIT)
-        if (notes.length === 0) {
-          return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
-        }
-        const queryTerms = toPromptTerms(userPrompt)
-        const broadNotes = [...notes]
-          .sort((a, b) => {
-            const byQueryScore = scoreFallbackNotePath(b.path, queryTerms) - scoreFallbackNotePath(a.path, queryTerms)
-            if (byQueryScore !== 0) {
-              return byQueryScore
-            }
-            return b.updatedAt - a.updatedAt
-          })
-          .slice(0, BROAD_CONTEXT_NOTE_LIMIT)
-
-        const broadExcerpts = await Promise.all(
-          broadNotes.map(async (note) => ({
-            path: note.path,
-            excerpt: createContextExcerpt(await readVaultNoteCached(note.path), endingIntent, 500)
+      if (matches.length > 0) {
+        const topMatches = matches.slice(0, MATCH_CONTEXT_NOTE_LIMIT)
+        const matchExcerpts = await Promise.all(
+          topMatches.map(async (match) => ({
+            path: match.path,
+            excerpt: createContextExcerpt(await readVaultNoteCached(match.path), endingIntent, 1200)
           }))
         )
+        let excerpts = ''
         let usedNotes = 0
-        let collected = ''
-        for (const entry of broadExcerpts) {
-          if (collected.length >= CONTEXT_BUDGET_CHARS) break
+        for (const entry of matchExcerpts) {
           if (!entry.excerpt.trim()) continue
           const block = `[${entry.path}]\n${entry.excerpt}\n\n`
-          if (collected.length + block.length > CONTEXT_BUDGET_CHARS) break
-          collected += block
+          if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) break
+          excerpts += block
           usedNotes += 1
         }
-        if (usedNotes === 0) {
-          return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
-        }
-        const usedPaths = broadExcerpts
-          .filter((entry) => entry.excerpt.trim().length > 0)
-          .slice(0, usedNotes)
-          .map((entry) => entry.path)
+        const snippets = topMatches.map((match) => `- ${match.path}:${match.line} ${match.snippet}`).join('\n')
         return {
-          content: `${userPrompt}\n\n[Obsidian context]\n${collected}`,
-          matchCount: usedNotes,
-          fallbackUsed: true,
-          notePaths: usedPaths
+          content: `${userPrompt}\n\n[Obsidian context]\n${snippets}${excerpts ? `\n${excerpts}` : ''}`,
+          matchCount: Math.max(topMatches.length, usedNotes),
+          notePaths: topMatches.map((match) => match.path),
+          mode: 'keyword'
         }
       }
-      const topMatches = matches.slice(0, MATCH_CONTEXT_NOTE_LIMIT)
-      const matchExcerpts = await Promise.all(
-        topMatches.map(async (match) => ({
-          path: match.path,
-          excerpt: createContextExcerpt(await readVaultNoteCached(match.path), endingIntent, 1200)
+
+      const ragResults = await window.jarvis.ragSearch(userPrompt, RAG_CONTEXT_CHUNK_LIMIT).catch(() => [])
+      if (ragResults.length > 0) {
+        let collected = ''
+        let usedChunks = 0
+        const sourcePaths: string[] = []
+        for (const result of ragResults) {
+          const sourcePath = trimRagSourceLabel(result.source)
+          const excerpt = toRagExcerpt(result.text)
+          if (!excerpt) {
+            continue
+          }
+
+          const block = `[${sourcePath} | relevance ${result.score.toFixed(2)}]\n${excerpt}\n\n`
+          if (collected.length + block.length > CONTEXT_BUDGET_CHARS) {
+            break
+          }
+
+          collected += block
+          usedChunks += 1
+          if (!sourcePaths.includes(sourcePath)) {
+            sourcePaths.push(sourcePath)
+          }
+        }
+
+        if (usedChunks > 0) {
+          return {
+            content: `${userPrompt}\n\n[Obsidian semantic context]\n${collected}`,
+            matchCount: usedChunks,
+            notePaths: sourcePaths,
+            mode: 'rag'
+          }
+        }
+      }
+
+      const notes = await window.jarvis.obsidianListNotes(FALLBACK_NOTE_SCAN_LIMIT)
+      if (notes.length === 0) {
+        return { content: userPrompt, matchCount: 0, notePaths: [], mode: 'none' }
+      }
+      const queryTerms = toPromptTerms(userPrompt)
+      const broadNotes = [...notes]
+        .sort((a, b) => {
+          const byQueryScore = scoreFallbackNotePath(b.path, queryTerms) - scoreFallbackNotePath(a.path, queryTerms)
+          if (byQueryScore !== 0) {
+            return byQueryScore
+          }
+          return b.updatedAt - a.updatedAt
+        })
+        .slice(0, BROAD_CONTEXT_NOTE_LIMIT)
+
+      const broadExcerpts = await Promise.all(
+        broadNotes.map(async (note) => ({
+          path: note.path,
+          excerpt: createContextExcerpt(await readVaultNoteCached(note.path), endingIntent, 500)
         }))
       )
-      let excerpts = ''
       let usedNotes = 0
-      for (const entry of matchExcerpts) {
+      let collected = ''
+      for (const entry of broadExcerpts) {
+        if (collected.length >= CONTEXT_BUDGET_CHARS) break
         if (!entry.excerpt.trim()) continue
         const block = `[${entry.path}]\n${entry.excerpt}\n\n`
-        if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) break
-        excerpts += block
+        if (collected.length + block.length > CONTEXT_BUDGET_CHARS) break
+        collected += block
         usedNotes += 1
       }
-      const snippets = topMatches.map((m) => `- ${m.path}:${m.line} ${m.snippet}`).join('\n')
+      if (usedNotes === 0) {
+        return { content: userPrompt, matchCount: 0, notePaths: [], mode: 'none' }
+      }
+      const usedPaths = broadExcerpts
+        .filter((entry) => entry.excerpt.trim().length > 0)
+        .slice(0, usedNotes)
+        .map((entry) => entry.path)
       return {
-        content: `${userPrompt}\n\n[Obsidian context]\n${snippets}${excerpts ? `\n${excerpts}` : ''}`,
-        matchCount: Math.max(topMatches.length, usedNotes),
-        fallbackUsed: false,
-        notePaths: topMatches.map((match) => match.path)
+        content: `${userPrompt}\n\n[Obsidian context]\n${collected}`,
+        matchCount: usedNotes,
+        notePaths: usedPaths,
+        mode: 'broad'
       }
     } catch {
-      return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
+      return { content: userPrompt, matchCount: 0, notePaths: [], mode: 'none' }
     }
   }, [readVaultNoteCached, useVaultContext, vaultStatus.connected])
 
@@ -990,7 +1061,7 @@ export const App = () => {
 
     let content = text
     let injectedMatches = 0
-    let fallbackContextUsed = false
+    let contextMode: 'none' | 'keyword' | 'rag' | 'broad' = 'none'
     let contextPaths: string[] = []
 
     if (vaultStatus.connected && useVaultContext) {
@@ -998,7 +1069,7 @@ export const App = () => {
       const enriched = await buildPromptWithVaultContext(text)
       content = enriched.content
       injectedMatches = enriched.matchCount
-      fallbackContextUsed = enriched.fallbackUsed
+      contextMode = enriched.mode
       contextPaths = enriched.notePaths
     }
 
@@ -1013,11 +1084,14 @@ export const App = () => {
       if (injectedMatches > 0) {
         const topSources = contextPaths.slice(0, 3).join(', ')
         const sourceSuffix = topSources ? ` (${topSources})` : ''
+        const matchLabel = injectedMatches > 1 ? 'items' : 'item'
         next.push({
           type: 'thinking',
-          content: fallbackContextUsed
-            ? `Context ready from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
-            : `Context matched ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
+          content: contextMode === 'rag'
+            ? `Semantic context ready from ${injectedMatches} ${matchLabel}${sourceSuffix}.`
+            : contextMode === 'broad'
+              ? `Context ready from broad vault scan (${injectedMatches} ${matchLabel})${sourceSuffix}.`
+              : `Context matched ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
         })
       }
       return next
