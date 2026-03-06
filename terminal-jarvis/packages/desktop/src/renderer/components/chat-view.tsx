@@ -8,27 +8,19 @@ export interface ChatEntry {
 export interface ChatViewProps {
   entries: ChatEntry[]
   isStreaming?: boolean
+  compact?: boolean
 }
 
 const labelMap: Record<ChatEntry['type'], string> = {
-  user: 'you',
-  assistant: 'jarvis',
-  thinking: 'thinking',
-  tool_call: 'tool call',
-  tool_result: 'result',
-  error: 'error'
+  user: 'You',
+  assistant: 'Jarvis',
+  thinking: 'Thinking',
+  tool_call: 'Tool',
+  tool_result: 'Result',
+  error: 'Error'
 }
 
-const iconMap: Record<ChatEntry['type'], string> = {
-  user: '>',
-  assistant: '//',
-  thinking: '~',
-  tool_call: '$',
-  tool_result: '<',
-  error: '!'
-}
-
-export const ChatView = ({ entries, isStreaming = false }: ChatViewProps) => {
+export const ChatView = ({ entries, isStreaming = false, compact = false }: ChatViewProps) => {
   const endRef = useRef<HTMLDivElement>(null)
   const previousCountRef = useRef(0)
 
@@ -38,153 +30,303 @@ export const ChatView = ({ entries, isStreaming = false }: ChatViewProps) => {
     previousCountRef.current = entries.length
   }, [entries, isStreaming])
 
+  const lastIndex = entries.length - 1
+  const isLastAssistantStreaming = (index: number): boolean =>
+    isStreaming && index === lastIndex && entries[index]?.type === 'assistant'
+
   return (
-    <section className={`chat-container${isStreaming ? ' streaming' : ''}`}>
+    <section className={`cv${isStreaming ? ' cv--streaming' : ''}${compact ? ' cv--compact' : ''}`}>
       <style>{`
-        .chat-container {
-          min-height: 400px;
-          max-height: calc(100vh - 260px);
+        .cv {
+          height: 100%;
           overflow-y: auto;
-          background: #0a0a0a;
-          font-family: 'JetBrains Mono', 'Consolas', monospace;
-          font-size: 0.85rem;
-          line-height: 1.6;
+          padding: 12px 0;
           scroll-behavior: smooth;
         }
-        .chat-container::-webkit-scrollbar { width: 4px; }
-        .chat-container::-webkit-scrollbar-track { background: #0a0a0a; }
-        .chat-container::-webkit-scrollbar-thumb { background: #333; }
-        .chat-container.streaming {
-          scroll-behavior: auto;
+        .cv--streaming { scroll-behavior: auto; }
+        .cv--compact { padding: 8px 0; }
+
+        /* empty state */
+        .cv-empty {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          gap: 20px;
+          padding: 48px 24px;
+          animation: cvBounceIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .chat-container.streaming .chat-entry,
-        .chat-container.streaming .entry-tool_call,
-        .chat-container.streaming .entry-error {
+        .cv--compact .cv-empty { gap: 14px; padding: 24px 16px; }
+        .cv-empty-logo {
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 600;
+          font-size: 2.4rem;
+          color: #a855f7;
+          animation: cvFloat 3s ease-in-out infinite;
+          text-shadow: 0 0 30px rgba(168, 85, 247, 0.3);
+        }
+        .cv--compact .cv-empty-logo { font-size: 1.6rem; }
+        .cv-empty-text {
+          color: rgba(228, 228, 231, 0.4);
+          font-size: 0.84rem;
+          text-align: center;
+          line-height: 1.7;
+          max-width: 340px;
+          animation: cvBounceIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both;
+        }
+        .cv--compact .cv-empty-text { font-size: 0.74rem; max-width: 260px; }
+        .cv-empty-hint {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.72rem;
+          color: rgba(168, 85, 247, 0.35);
+          padding: 10px 18px;
+          border: 1px solid rgba(168, 85, 247, 0.12);
+          border-radius: 12px;
+          background: rgba(168, 85, 247, 0.04);
+          animation: cvBounceIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+          transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s;
+        }
+        .cv--compact .cv-empty-hint { font-size: 0.64rem; padding: 8px 14px; }
+        .cv-empty-hint:hover {
+          transform: scale(1.04);
+          background: rgba(168, 85, 247, 0.08);
+        }
+
+        /* entries */
+        .cv-entry {
+          padding: 14px 20px;
+          position: relative;
+          animation: cvPopIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+          transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .cv--compact .cv-entry { padding: 10px 12px; }
+        .cv-entry:hover {
+          transform: scale(1.005);
+        }
+        .cv--streaming .cv-entry {
           animation: none !important;
         }
-        .chat-empty {
-          color: #444;
-          padding: 3rem 2rem;
-          text-align: center;
-          animation: fadeUp 0.5s ease both;
+        .cv-entry + .cv-entry { margin-top: 2px; }
+
+        .cv-entry--user {
+          background: rgba(168, 85, 247, 0.04);
+          border-radius: 16px;
+          margin: 6px 16px;
+          border: 1px solid rgba(168, 85, 247, 0.08);
         }
-        .chat-empty .prompt-hint {
-          display: block;
-          margin-top: 1rem;
-          color: #333;
-          font-size: 0.72rem;
+        .cv--compact .cv-entry--user { margin: 4px 8px; border-radius: 12px; }
+        .cv-entry--assistant {
+          padding: 16px 20px;
+          margin: 6px 16px;
+          border-radius: 16px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.04);
         }
-        .chat-entry {
-          padding: 0.75rem 1rem;
-          border-bottom: 1px solid #141414;
-          animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
-          position: relative;
-          overflow: hidden;
+        .cv--compact .cv-entry--assistant { padding: 10px 12px; margin: 4px 8px; border-radius: 12px; }
+        .cv-entry--thinking {
+          background: rgba(139, 92, 246, 0.05);
+          border-left: 3px solid rgba(139, 92, 246, 0.2);
+          margin: 4px 16px;
+          border-radius: 0 12px 12px 0;
+          padding: 10px 16px;
+          animation: cvSlideRight 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .chat-entry::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 0;
-          bottom: 0;
-          width: 0;
-          transition: width 0.3s ease;
+        .cv--compact .cv-entry--thinking { margin: 3px 8px; padding: 7px 10px; }
+        .cv-entry--tool_call {
+          background: rgba(52, 211, 153, 0.05);
+          border-left: 3px solid rgba(52, 211, 153, 0.25);
+          margin: 4px 16px;
+          border-radius: 0 12px 12px 0;
+          padding: 10px 16px;
+          animation: cvPopIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .entry-user { background: #0e0e0e; }
-        .entry-user::before { background: #a855f7; width: 2px; }
-        .entry-assistant { background: #0a0a0a; }
-        .entry-assistant::before { background: #a855f7; width: 2px; opacity: 0.4; }
-        .entry-thinking {
-          background: #0c0c16;
-          font-style: italic;
-          border-left: 2px solid rgba(138, 138, 205, 0.3);
+        .cv--compact .cv-entry--tool_call { margin: 3px 8px; padding: 7px 10px; }
+        .cv-entry--tool_result {
+          background: rgba(255, 255, 255, 0.015);
+          border-left: 3px solid rgba(255, 255, 255, 0.06);
+          margin: 4px 16px;
+          border-radius: 0 12px 12px 0;
+          padding: 10px 16px;
+          animation: cvSlideRight 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .entry-tool_call {
-          background: #0a120a;
-          border-left: 2px solid #4a9c4a;
-          animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both, toolPulse 0.6s ease;
+        .cv--compact .cv-entry--tool_result { margin: 3px 8px; padding: 7px 10px; max-height: 100px; }
+        .cv-entry--error {
+          background: rgba(239, 68, 68, 0.06);
+          border-left: 3px solid rgba(239, 68, 68, 0.3);
+          margin: 4px 16px;
+          border-radius: 0 12px 12px 0;
+          padding: 10px 16px;
+          animation: cvWobble 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .entry-tool_result {
-          background: #0c0c0c;
-          border-left: 2px solid #333;
-        }
-        .entry-error {
-          background: #140a0a;
-          border-left: 2px solid #c44;
-          animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both, errorShake 0.4s ease;
-        }
-        .entry-label {
-          display: inline-flex;
+        .cv--compact .cv-entry--error { margin: 3px 8px; padding: 7px 10px; }
+
+        /* label */
+        .cv-label {
+          display: flex;
           align-items: center;
-          gap: 0.4rem;
-          font-size: 0.68rem;
+          gap: 8px;
+          margin-bottom: 6px;
+          font-size: 0.7rem;
+          font-weight: 500;
           text-transform: uppercase;
-          letter-spacing: 0.1em;
-          margin-bottom: 0.3rem;
-          opacity: 0.5;
+          letter-spacing: 0.05em;
         }
-        .entry-icon {
-          color: #a855f7;
-          font-weight: 700;
-          font-size: 0.72rem;
+        .cv--compact .cv-label { font-size: 0.62rem; gap: 5px; margin-bottom: 4px; }
+        .cv-label--user { color: rgba(168, 85, 247, 0.6); }
+        .cv-label--assistant { color: rgba(168, 85, 247, 0.5); }
+        .cv-label--thinking { color: rgba(139, 92, 246, 0.45); }
+        .cv-label--tool_call { color: rgba(52, 211, 153, 0.55); }
+        .cv-label--tool_result { color: rgba(255, 255, 255, 0.25); }
+        .cv-label--error { color: rgba(239, 68, 68, 0.65); }
+
+        .cv-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          flex-shrink: 0;
+          animation: cvDotBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .entry-content {
+        .cv--compact .cv-dot { width: 5px; height: 5px; }
+        .cv-dot--user { background: #a855f7; box-shadow: 0 0 8px rgba(168, 85, 247, 0.4); }
+        .cv-dot--assistant { background: #a855f7; box-shadow: 0 0 8px rgba(168, 85, 247, 0.3); opacity: 0.6; }
+        .cv-dot--thinking { background: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.3); }
+        .cv-dot--tool_call { background: #34d399; box-shadow: 0 0 8px rgba(52, 211, 153, 0.4); }
+        .cv-dot--tool_result { background: rgba(255, 255, 255, 0.2); }
+        .cv-dot--error { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); animation: cvDotBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both, cvPulseRed 1s ease-in-out infinite; }
+
+        /* content */
+        .cv-content {
           display: block;
-        }
-        .entry-content-user { color: #e8e8e8; }
-        .entry-content-assistant { color: #d4d4d4; }
-        .entry-content-thinking { color: #8b8bcd; }
-        .entry-content-tool_call { color: #7ec87e; font-size: 0.8rem; }
-        .entry-content-tool_result {
-          color: #888;
           white-space: pre-wrap;
-          max-height: 200px;
-          overflow-y: auto;
+          word-break: break-word;
+          line-height: 1.65;
+        }
+        .cv-content--user {
+          color: rgba(228, 228, 231, 0.9);
+          font-size: 0.84rem;
+        }
+        .cv--compact .cv-content--user { font-size: 0.76rem; }
+        .cv-content--assistant {
+          color: rgba(228, 228, 231, 0.85);
+          font-size: 0.84rem;
+        }
+        .cv--compact .cv-content--assistant { font-size: 0.76rem; }
+        .cv-content--thinking {
+          color: rgba(139, 92, 246, 0.5);
           font-size: 0.78rem;
+          font-style: italic;
         }
-        .entry-content-error { color: #e87c7c; }
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateX(-8px); }
-          to { opacity: 1; transform: translateX(0); }
+        .cv--compact .cv-content--thinking { font-size: 0.7rem; }
+        .cv-content--tool_call {
+          font-family: 'JetBrains Mono', monospace;
+          color: rgba(52, 211, 153, 0.7);
+          font-size: 0.74rem;
         }
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+        .cv--compact .cv-content--tool_call { font-size: 0.66rem; }
+        .cv-content--tool_result {
+          font-family: 'JetBrains Mono', monospace;
+          color: rgba(255, 255, 255, 0.35);
+          font-size: 0.72rem;
+          max-height: 180px;
+          overflow-y: auto;
         }
-        @keyframes toolPulse {
-          0% { box-shadow: inset 0 0 0 rgba(74, 156, 74, 0); }
-          50% { box-shadow: inset 0 0 20px rgba(74, 156, 74, 0.08); }
-          100% { box-shadow: inset 0 0 0 rgba(74, 156, 74, 0); }
+        .cv--compact .cv-content--tool_result { font-size: 0.64rem; max-height: 100px; }
+        .cv-content--error {
+          color: rgba(239, 68, 68, 0.8);
+          font-size: 0.8rem;
         }
-        @keyframes errorShake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-3px); }
-          75% { transform: translateX(3px); }
+        .cv--compact .cv-content--error { font-size: 0.72rem; }
+
+        /* cursor */
+        .cv-cursor {
+          display: inline-block;
+          width: 2px;
+          height: 1.15em;
+          background: #a855f7;
+          margin-left: 2px;
+          vertical-align: text-bottom;
+          border-radius: 1px;
+          animation: cvCursorBounce 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+          box-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+        }
+
+        /* ---- KEYFRAMES ---- */
+        @keyframes cvBounceIn {
+          0% { opacity: 0; transform: scale(0.3); }
+          50% { opacity: 1; }
+          100% { transform: scale(1); }
+        }
+        @keyframes cvPopIn {
+          0% { opacity: 0; transform: scale(0.92) translateY(12px); }
+          60% { transform: scale(1.02) translateY(-2px); }
+          100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes cvSlideRight {
+          0% { opacity: 0; transform: translateX(-20px) scale(0.95); }
+          60% { transform: translateX(4px) scale(1.01); }
+          100% { opacity: 1; transform: translateX(0) scale(1); }
+        }
+        @keyframes cvWobble {
+          0% { opacity: 0; transform: translateX(0) scale(0.9); }
+          15% { transform: translateX(-8px) scale(1); }
+          30% { transform: translateX(6px); }
+          45% { transform: translateX(-4px); }
+          60% { transform: translateX(2px); }
+          75% { transform: translateX(-1px); }
+          100% { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes cvFloat {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-8px); }
+        }
+        @keyframes cvCursorBounce {
+          0%, 100% { opacity: 1; transform: scaleY(1); }
+          30% { opacity: 0.4; transform: scaleY(0.6); }
+          60% { opacity: 1; transform: scaleY(1.1); }
+        }
+        @keyframes cvDotBounce {
+          0% { transform: scale(0); }
+          60% { transform: scale(1.4); }
+          100% { transform: scale(1); }
+        }
+        @keyframes cvPulseRed {
+          0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.3); }
+          50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.6); }
         }
       `}</style>
       {entries.length === 0 ? (
-        <div className="chat-empty">
-          <div>Ask Jarvis anything. It can run commands, edit files, and work with Obsidian notes.</div>
-          <span className="prompt-hint">try: "connect my vault and summarize notes about roadmap"</span>
+        <div className="cv-empty">
+          <div className="cv-empty-logo">//</div>
+          <div className="cv-empty-text">
+            {compact
+              ? 'Ask Jarvis anything.'
+              : 'Ask anything. Jarvis can run commands, edit files, capture your screen, search your knowledge base, and work with Obsidian notes.'
+            }
+          </div>
+          <div className="cv-empty-hint">
+            try: &quot;{compact ? 'what\'s on my screen?' : 'summarize my recent notes'}&quot;
+          </div>
         </div>
       ) : (
         entries.map((entry, index) => (
           <div
             key={index}
-            className={`chat-entry entry-${entry.type}`}
-            style={{ animationDelay: `${Math.min(index * 0.03, 0.15)}s` }}
+            className={`cv-entry cv-entry--${entry.type}`}
+            style={{ animationDelay: `${Math.min(index * 0.05, 0.2)}s` }}
           >
-            <div className="entry-label">
-              <span className="entry-icon">{iconMap[entry.type]}</span>
+            <div className={`cv-label cv-label--${entry.type}`}>
+              <span className={`cv-dot cv-dot--${entry.type}`} />
               {labelMap[entry.type]}
             </div>
-            <span className={`entry-content entry-content-${entry.type}`}>
+            <span className={`cv-content cv-content--${entry.type}`}>
               {entry.content}
+              {isLastAssistantStreaming(index) && <span className="cv-cursor" />}
             </span>
           </div>
         ))
       )}
-      <div ref={endRef} />
+      <div ref={endRef} style={{ height: 1 }} />
     </section>
   )
 }

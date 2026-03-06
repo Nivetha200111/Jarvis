@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentEvent, ModelInfo, ObsidianVaultStatus } from '@jarvis/core'
+import type { AgentEvent, ModelInfo, ObsidianVaultStatus, RagStats } from '@jarvis/core'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
 
 type ChatMode = 'fast' | 'agent'
@@ -20,10 +20,7 @@ const createContextExcerpt = (
   endingIntent: boolean,
   maxChars = 1800
 ): string => {
-  if (!content) {
-    return ''
-  }
-
+  if (!content) return ''
   if (endingIntent) {
     const tailChars = Math.max(500, Math.floor(maxChars * 0.8))
     const headChars = Math.max(120, Math.floor(maxChars * 0.2))
@@ -31,9 +28,503 @@ const createContextExcerpt = (
     const head = content.length > headChars ? content.slice(0, headChars) : ''
     return head ? `${head}\n...\n${tail}` : tail
   }
-
   return content.slice(0, maxChars)
 }
+
+const CSS = `
+  /* ---- GLOBAL ANIMATIONS ---- */
+  @keyframes appDrop {
+    0% { opacity: 0; transform: translateY(-30px) scale(0.95); }
+    60% { transform: translateY(6px) scale(1.01); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes popIn {
+    0% { opacity: 0; transform: scale(0.5); }
+    70% { transform: scale(1.08); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  @keyframes slideUp {
+    0% { opacity: 0; transform: translateY(20px); }
+    60% { transform: translateY(-3px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes jelly {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.15, 0.88); }
+    50% { transform: scale(0.92, 1.06); }
+    70% { transform: scale(1.04, 0.97); }
+    100% { transform: scale(1); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+  @keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0 rgba(168, 85, 247, 0); }
+    50% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.15); }
+  }
+  @keyframes dotPop {
+    0% { transform: scale(0); }
+    60% { transform: scale(1.6); }
+    100% { transform: scale(1); }
+  }
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-3deg); }
+    75% { transform: rotate(3deg); }
+  }
+  @keyframes chipBounce {
+    0% { opacity: 0; transform: scale(0.3) translateY(10px); }
+    60% { transform: scale(1.1) translateY(-2px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes statusBreathe {
+    0%, 100% { opacity: 0.5; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+  @keyframes inputGlow {
+    0% { box-shadow: 0 0 0 3px rgba(168, 85, 247, 0); }
+    100% { box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.12); }
+  }
+
+  .app {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #0a0a0c;
+    overflow: hidden;
+    animation: appDrop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* ---- TITLEBAR ---- */
+  .titlebar {
+    -webkit-app-region: drag;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    height: 46px;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .titlebar--pip {
+    height: 36px;
+    padding: 0 12px;
+  }
+  .titlebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s both;
+  }
+  .titlebar-mark {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 1rem;
+    color: #a855f7;
+    animation: float 3s ease-in-out infinite;
+    text-shadow: 0 0 16px rgba(168, 85, 247, 0.4);
+  }
+  .titlebar--pip .titlebar-mark { font-size: 0.85rem; }
+  .titlebar-name {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: rgba(228, 228, 231, 0.8);
+    letter-spacing: -0.02em;
+  }
+  .titlebar--pip .titlebar-name { font-size: 0.78rem; }
+  .titlebar-right {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+  }
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(228, 228, 231, 0.25);
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .titlebar--pip .status-pill { padding: 3px 8px; font-size: 0.6rem; }
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .status-dot--idle { background: rgba(255, 255, 255, 0.2); }
+  .status-dot--active {
+    background: #34d399;
+    box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
+    animation: dotPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .status-dot--busy {
+    background: #a855f7;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+    animation: statusBreathe 1.2s ease-in-out infinite;
+  }
+  .queue-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    color: #a855f7;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(168, 85, 247, 0.1);
+    animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* ---- WINDOW CONTROLS ---- */
+  .win-ctrl {
+    -webkit-app-region: no-drag;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: rgba(228, 228, 231, 0.25);
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-family: 'JetBrains Mono', monospace;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    flex-shrink: 0;
+  }
+  .win-ctrl:hover {
+    color: rgba(228, 228, 231, 0.7);
+    background: rgba(255, 255, 255, 0.06);
+    transform: scale(1.1);
+  }
+  .win-ctrl:active {
+    transform: scale(0.88);
+    transition-duration: 0.08s;
+  }
+  .win-ctrl--pip {
+    color: rgba(168, 85, 247, 0.5);
+  }
+  .win-ctrl--pip:hover {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.1);
+  }
+  .win-ctrl--pip-active {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 8px rgba(168, 85, 247, 0.15);
+  }
+  .win-ctrl--close:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  /* ---- TOOLBAR ---- */
+  .toolbar {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both;
+  }
+  .toolbar--pip {
+    padding: 6px 10px;
+    gap: 4px;
+  }
+  .tb-group {
+    display: inline-flex;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .tb-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: rgba(228, 228, 231, 0.3);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    white-space: nowrap;
+    position: relative;
+  }
+  .toolbar--pip .tb-btn { font-size: 0.64rem; padding: 5px 9px; }
+  .tb-btn:hover {
+    color: rgba(228, 228, 231, 0.7);
+    background: rgba(255, 255, 255, 0.04);
+    transform: scale(1.05);
+  }
+  .tb-btn:active {
+    transform: scale(0.93);
+    transition-duration: 0.08s;
+  }
+  .tb-btn:disabled { cursor: not-allowed; opacity: 0.3; }
+  .tb-btn--active {
+    color: rgba(228, 228, 231, 0.9);
+    background: rgba(255, 255, 255, 0.08);
+    animation: jelly 0.4s ease;
+  }
+  .tb-btn--accent { color: rgba(168, 85, 247, 0.6); }
+  .tb-btn--accent:hover {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.08);
+    transform: scale(1.06);
+  }
+  .tb-btn--accent:active { transform: scale(0.92); }
+  .tb-btn--accent.tb-btn--active {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.12);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.1);
+  }
+  .tb-btn--green { color: rgba(52, 211, 153, 0.5); }
+  .tb-btn--green:hover {
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.08);
+    transform: scale(1.06);
+  }
+  .tb-btn--green.tb-btn--active {
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.1);
+    box-shadow: 0 0 12px rgba(52, 211, 153, 0.08);
+  }
+  .tb-btn--screen {
+    color: rgba(251, 191, 36, 0.5);
+  }
+  .tb-btn--screen:hover {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
+  }
+  .tb-select {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(228, 228, 231, 0.5);
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .toolbar--pip .tb-select { font-size: 0.62rem; padding: 4px 8px; }
+  .tb-select:hover {
+    border-color: rgba(168, 85, 247, 0.2);
+    transform: scale(1.02);
+  }
+  .tb-select:focus {
+    border-color: rgba(168, 85, 247, 0.3);
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.08);
+  }
+  .tb-select option { background: #151518; }
+  .tb-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    color: rgba(228, 228, 231, 0.25);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .tb-badge:hover { transform: scale(1.06); }
+  .tb-badge-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    display: inline-block;
+    animation: dotPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  .tb-spacer { flex: 1; }
+
+  /* ---- CHAT AREA ---- */
+  .chat-area {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+  .chat-area::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 20px;
+    background: linear-gradient(to bottom, #0a0a0c, transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .chat-area::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 20px;
+    background: linear-gradient(to top, #0a0a0c, transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ---- ATTACHMENTS ---- */
+  .attach-bar {
+    padding: 8px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .attach-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 12px;
+    border-radius: 10px;
+    background: rgba(168, 85, 247, 0.07);
+    border: 1px solid rgba(168, 85, 247, 0.12);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    color: rgba(168, 85, 247, 0.8);
+    animation: chipBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .attach-chip:hover { transform: scale(1.06); }
+  .attach-chip-x {
+    cursor: pointer;
+    color: rgba(228, 228, 231, 0.3);
+    font-size: 0.72rem;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+  }
+  .attach-chip-x:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+    transform: scale(1.2) rotate(90deg);
+  }
+
+  /* ---- INPUT ---- */
+  .input-area {
+    padding: 14px 16px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.015);
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    flex-shrink: 0;
+    animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both;
+  }
+  .input-area--pip {
+    padding: 10px 10px 12px;
+    gap: 6px;
+  }
+  .input-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .input-action-btn {
+    padding: 9px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(228, 228, 231, 0.25);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', monospace;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    line-height: 1;
+  }
+  .input-area--pip .input-action-btn { padding: 7px 8px; font-size: 0.72rem; }
+  .input-action-btn:hover {
+    color: #a855f7;
+    background: rgba(168, 85, 247, 0.08);
+    border-color: rgba(168, 85, 247, 0.15);
+    transform: scale(1.1) rotate(-3deg);
+  }
+  .input-action-btn:active {
+    transform: scale(0.88);
+    transition-duration: 0.08s;
+  }
+  .input-action-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .input-wrap { flex: 1; }
+  .input-field {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(228, 228, 231, 0.9);
+    padding: 11px 16px;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
+    resize: none;
+    outline: none;
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    line-height: 1.5;
+  }
+  .input-area--pip .input-field { padding: 9px 12px; font-size: 0.8rem; border-radius: 10px; }
+  .input-field::placeholder { color: rgba(228, 228, 231, 0.15); }
+  .input-field:focus {
+    border-color: rgba(168, 85, 247, 0.3);
+    box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.08), 0 0 20px rgba(168, 85, 247, 0.05);
+    transform: scale(1.005);
+  }
+  .send-btn {
+    padding: 11px 20px;
+    border: none;
+    border-radius: 12px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    flex-shrink: 0;
+  }
+  .input-area--pip .send-btn { padding: 9px 14px; font-size: 0.76rem; border-radius: 10px; }
+  .send-btn:active {
+    transform: scale(0.88) !important;
+    transition-duration: 0.08s;
+  }
+  .send-btn--ready {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(139, 92, 246, 0.15));
+    color: #a855f7;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    animation: pulseGlow 2s ease-in-out infinite;
+  }
+  .send-btn--ready:hover {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(139, 92, 246, 0.25));
+    transform: scale(1.06);
+    box-shadow: 0 0 24px rgba(168, 85, 247, 0.2);
+  }
+  .send-btn--disabled {
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(228, 228, 231, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    cursor: not-allowed;
+  }
+  .send-btn--queuing {
+    background: rgba(168, 85, 247, 0.08);
+    color: rgba(168, 85, 247, 0.5);
+    border: 1px solid rgba(168, 85, 247, 0.12);
+    animation: wiggle 0.6s ease-in-out infinite;
+  }
+`
 
 export const App = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -47,6 +538,8 @@ export const App = () => {
   const [chatMode, setChatMode] = useState<ChatMode>('fast')
   const [useVaultContext, setUseVaultContext] = useState(true)
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
+  const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
+  const [pipMode, setPipMode] = useState(false)
   const statusRef = useRef(status)
   const pendingTokenRef = useRef('')
   const rafRef = useRef<number | null>(null)
@@ -57,10 +550,11 @@ export const App = () => {
     window.jarvis.modelList().then((items) => {
       setModels(items)
       setSelectedModel((current) => {
-        if (current && items.some((model) => model.id === current)) {
-          return current
-        }
-        return items[0]?.id ?? ''
+        if (current && items.some((model) => model.id === current)) return current
+        const fast = items.find((m) => m.id === 'qwen2.5:3b')
+          ?? items.find((m) => m.id === 'qwen2.5:1.5b')
+          ?? items.find((m) => m.id.startsWith('qwen2.5'))
+        return fast?.id ?? items[0]?.id ?? ''
       })
     })
   }, [])
@@ -72,19 +566,47 @@ export const App = () => {
   }, [])
 
   useEffect(() => {
-    statusRef.current = status
-  }, [status])
+    window.jarvis.isPip().then(setPipMode).catch(() => {})
+    const unsub = window.jarvis.onPipChanged(setPipMode)
+    return unsub
+  }, [])
+
+  useEffect(() => { statusRef.current = status }, [status])
 
   useEffect(() => {
     noteContentCacheRef.current.clear()
   }, [vaultStatus.connected, vaultStatus.vaultPath])
 
+  useEffect(() => {
+    if (!vaultStatus.connected) return
+    let cancelled = false
+    const indexVault = async () => {
+      try {
+        const notes = await window.jarvis.obsidianListNotes(200)
+        for (const note of notes) {
+          if (cancelled) break
+          try {
+            const content = await window.jarvis.obsidianReadNote(note.path)
+            if (content.trim()) await window.jarvis.ragIndex(`vault:${note.path}`, content)
+          } catch { /* skip */ }
+        }
+        if (!cancelled) {
+          const stats = await window.jarvis.ragStats()
+          setRagInfo(stats)
+        }
+      } catch { /* best-effort */ }
+    }
+    void indexVault()
+    return () => { cancelled = true }
+  }, [vaultStatus.connected, vaultStatus.vaultPath])
+
+  useEffect(() => {
+    window.jarvis.ragStats().then(setRagInfo).catch(() => {})
+  }, [])
+
   const readVaultNoteCached = useCallback(async (notePath: string): Promise<string> => {
     const cached = noteContentCacheRef.current.get(notePath)
-    if (cached !== undefined) {
-      return cached
-    }
-
+    if (cached !== undefined) return cached
     const content = await window.jarvis.obsidianReadNote(notePath)
     noteContentCacheRef.current.set(notePath, content)
     return content
@@ -92,11 +614,8 @@ export const App = () => {
 
   const canSend = useMemo(() => prompt.trim().length > 0, [prompt])
   const latestAssistantReply = useMemo(() => {
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const current = entries[index]
-      if (current?.type === 'assistant') {
-        return current.content
-      }
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]?.type === 'assistant') return entries[i]!.content
     }
     return ''
   }, [entries])
@@ -105,13 +624,10 @@ export const App = () => {
     [vaultStatus.connected, latestAssistantReply, busy]
   )
   const connectedVaultName = useMemo(() => {
-    const path = vaultStatus.vaultPath
-    if (!path) {
-      return ''
-    }
-
-    const segments = path.split(/[\\/]/)
-    return segments[segments.length - 1] ?? path
+    const p = vaultStatus.vaultPath
+    if (!p) return ''
+    const seg = p.split(/[\\/]/)
+    return seg[seg.length - 1] ?? p
   }, [vaultStatus.vaultPath])
 
   const buildPromptWithVaultContext = useCallback(async (
@@ -120,103 +636,55 @@ export const App = () => {
     if (!useVaultContext || !vaultStatus.connected) {
       return { content: userPrompt, matchCount: 0, fallbackUsed: false }
     }
-
     try {
       const endingIntent = ENDING_INTENT_PATTERN.test(userPrompt)
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
       if (matches.length === 0) {
         const notes = await window.jarvis.obsidianListNotes(RECENT_NOTE_SCAN_LIMIT)
-        if (notes.length === 0) {
-          return { content: userPrompt, matchCount: 0, fallbackUsed: false }
-        }
-
+        if (notes.length === 0) return { content: userPrompt, matchCount: 0, fallbackUsed: false }
         const broadNotes = notes.slice(0, BROAD_CONTEXT_NOTE_LIMIT)
         const broadExcerpts = await Promise.all(
-          broadNotes.map(async (note) => {
-            const raw = await readVaultNoteCached(note.path)
-            return {
-              path: note.path,
-              excerpt: createContextExcerpt(raw, endingIntent, 500)
-            }
-          })
+          broadNotes.map(async (note) => ({
+            path: note.path,
+            excerpt: createContextExcerpt(await readVaultNoteCached(note.path), endingIntent, 500)
+          }))
         )
-
         let usedNotes = 0
         let collected = ''
         for (const entry of broadExcerpts) {
-          if (collected.length >= CONTEXT_BUDGET_CHARS) {
-            break
-          }
-
-          const excerpt = entry.excerpt
-          if (!excerpt.trim()) {
-            continue
-          }
-
-          const block = `[${entry.path}]\n${excerpt}\n\n`
-          if (collected.length + block.length > CONTEXT_BUDGET_CHARS) {
-            break
-          }
-
+          if (collected.length >= CONTEXT_BUDGET_CHARS) break
+          if (!entry.excerpt.trim()) continue
+          const block = `[${entry.path}]\n${entry.excerpt}\n\n`
+          if (collected.length + block.length > CONTEXT_BUDGET_CHARS) break
           collected += block
           usedNotes += 1
         }
-
-        if (usedNotes === 0) {
-          return { content: userPrompt, matchCount: 0, fallbackUsed: false }
-        }
-
-        const contextBlock = [
-          '[Obsidian context]',
-          'Using broad vault excerpts for context coverage.',
-          collected
-        ].join('\n')
-
+        if (usedNotes === 0) return { content: userPrompt, matchCount: 0, fallbackUsed: false }
         return {
-          content: `${userPrompt}\n\n${contextBlock}`,
+          content: `${userPrompt}\n\n[Obsidian context]\n${collected}`,
           matchCount: usedNotes,
           fallbackUsed: true
         }
       }
-
       const topMatches = matches.slice(0, MATCH_CONTEXT_NOTE_LIMIT)
       const matchExcerpts = await Promise.all(
-        topMatches.map(async (match) => {
-          const note = await readVaultNoteCached(match.path)
-          return {
-            path: match.path,
-            excerpt: createContextExcerpt(note, endingIntent, 1200)
-          }
-        })
+        topMatches.map(async (match) => ({
+          path: match.path,
+          excerpt: createContextExcerpt(await readVaultNoteCached(match.path), endingIntent, 1200)
+        }))
       )
       let excerpts = ''
       let usedNotes = 0
       for (const entry of matchExcerpts) {
-        const excerpt = entry.excerpt
-        if (!excerpt.trim()) {
-          continue
-        }
-        const block = `[${entry.path}]\n${excerpt}\n\n`
-        if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) {
-          break
-        }
+        if (!entry.excerpt.trim()) continue
+        const block = `[${entry.path}]\n${entry.excerpt}\n\n`
+        if (excerpts.length + block.length > CONTEXT_BUDGET_CHARS) break
         excerpts += block
         usedNotes += 1
       }
-
-      const snippets = topMatches
-        .map((match) => `- ${match.path}:${match.line} ${match.snippet}`)
-        .join('\n')
-
-      const contextBlock = [
-        '[Obsidian context]',
-        'Use this only if relevant to the user request.',
-        snippets,
-        excerpts ? `\n[Relevant note excerpts]\n${excerpts}` : ''
-      ].join('\n')
-
+      const snippets = topMatches.map((m) => `- ${m.path}:${m.line} ${m.snippet}`).join('\n')
       return {
-        content: `${userPrompt}\n\n${contextBlock}`,
+        content: `${userPrompt}\n\n[Obsidian context]\n${snippets}${excerpts ? `\n${excerpts}` : ''}`,
         matchCount: Math.max(topMatches.length, usedNotes),
         fallbackUsed: false
       }
@@ -226,40 +694,26 @@ export const App = () => {
   }, [readVaultNoteCached, useVaultContext, vaultStatus.connected])
 
   const setStatusSafe = useCallback((next: string): void => {
-    if (statusRef.current === next) {
-      return
-    }
-
+    if (statusRef.current === next) return
     statusRef.current = next
     setStatus(next)
   }, [])
 
   const flushPendingTokens = useCallback((): void => {
-    if (!pendingTokenRef.current) {
-      return
-    }
-
-    const tokenBuffer = pendingTokenRef.current
+    if (!pendingTokenRef.current) return
+    const buf = pendingTokenRef.current
     pendingTokenRef.current = ''
-
     setEntries((prev) => {
       const last = prev[prev.length - 1]
       if (last && last.type === 'assistant') {
-        return [
-          ...prev.slice(0, -1),
-          { type: 'assistant', content: `${last.content}${tokenBuffer}` }
-        ]
+        return [...prev.slice(0, -1), { type: 'assistant', content: `${last.content}${buf}` }]
       }
-
-      return [...prev, { type: 'assistant', content: tokenBuffer }]
+      return [...prev, { type: 'assistant', content: buf }]
     })
   }, [])
 
   const scheduleTokenFlush = useCallback((): void => {
-    if (rafRef.current !== null) {
-      return
-    }
-
+    if (rafRef.current !== null) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null
       flushPendingTokens()
@@ -279,12 +733,10 @@ export const App = () => {
       streamUnsubscribeRef.current()
       streamUnsubscribeRef.current = null
     }
-
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-
     pendingTokenRef.current = ''
   }, [])
 
@@ -292,6 +744,9 @@ export const App = () => {
     const paths = await window.jarvis.openFiles()
     if (paths.length > 0) {
       setAttachedPaths((prev) => [...prev, ...paths])
+      for (const p of paths) {
+        window.jarvis.ragIndex(`file:${p}`, `[File attached: ${p}]`).catch(() => {})
+      }
     }
   }
 
@@ -302,65 +757,66 @@ export const App = () => {
 
   const handleConnectVault = async (): Promise<void> => {
     try {
-      const nextStatus = await window.jarvis.obsidianConnect()
-      setVaultStatus(nextStatus)
-      if (nextStatus.connected) {
-        setStatusSafe(`vault connected (${nextStatus.noteCount} notes)`)
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      pushErrorEntry(`Obsidian connect failed: ${message}`)
+      const next = await window.jarvis.obsidianConnect()
+      setVaultStatus(next)
+      if (next.connected) setStatusSafe('vault connected')
+    } catch (e: unknown) {
+      pushErrorEntry(`Vault: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
   const handleDisconnectVault = async (): Promise<void> => {
     try {
-      const nextStatus = await window.jarvis.obsidianDisconnect()
-      setVaultStatus(nextStatus)
-      setStatusSafe('vault disconnected')
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      pushErrorEntry(`Obsidian disconnect failed: ${message}`)
+      const next = await window.jarvis.obsidianDisconnect()
+      setVaultStatus(next)
+      setStatusSafe('disconnected')
+    } catch (e: unknown) {
+      pushErrorEntry(`Vault: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
   const handleSaveLastReply = async (): Promise<void> => {
-    if (!canSaveReply) {
-      return
-    }
-
-    const timestamp = new Date().toISOString()
-    const dailyNote = `Jarvis/${timestamp.slice(0, 10)}.md`
-    const payload = `## ${timestamp}\n\n${latestAssistantReply.trim()}\n\n`
-
+    if (!canSaveReply) return
+    const ts = new Date().toISOString()
     try {
-      const result = await window.jarvis.obsidianWriteNote(dailyNote, payload, 'append')
-      setStatusSafe(`saved ${result.path}`)
-      const nextStatus = await window.jarvis.obsidianStatus()
-      setVaultStatus(nextStatus)
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error)
-      pushErrorEntry(`Failed to save reply to Obsidian: ${message}`)
+      await window.jarvis.obsidianWriteNote(`Jarvis/${ts.slice(0, 10)}.md`, `## ${ts}\n\n${latestAssistantReply.trim()}\n\n`, 'append')
+      setStatusSafe('saved')
+      setVaultStatus(await window.jarvis.obsidianStatus())
+    } catch (e: unknown) {
+      pushErrorEntry(`Save: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
   const handleAttachFolder = async (): Promise<void> => {
     const paths = await window.jarvis.openFolder()
-    if (paths.length > 0) {
-      setAttachedPaths((prev) => [...prev, ...paths])
-    }
+    if (paths.length > 0) setAttachedPaths((prev) => [...prev, ...paths])
   }
 
   const removeAttachment = (index: number): void => {
     setAttachedPaths((prev) => prev.filter((_, i) => i !== index))
   }
 
+  const handleTogglePip = async (): Promise<void> => {
+    const next = await window.jarvis.togglePip()
+    setPipMode(next)
+  }
+
+  const handleScreenCapture = async (): Promise<void> => {
+    try {
+      const capture = await window.jarvis.captureScreen()
+      setEntries((prev) => [...prev, {
+        type: 'thinking',
+        content: `Screen captured: ${capture.width}x${capture.height} at ${capture.timestamp}`
+      }])
+    } catch (e: unknown) {
+      pushErrorEntry(`Capture: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
   useEffect(() => () => teardownStream(), [teardownStream])
 
   const sendMessage = useCallback(async (text: string): Promise<void> => {
-    if (!text.trim()) {
-      return
-    }
+    if (!text.trim()) return
     teardownStream()
     setBusy(true)
     setStatusSafe('thinking...')
@@ -370,7 +826,7 @@ export const App = () => {
     let fallbackContextUsed = false
 
     if (vaultStatus.connected && useVaultContext) {
-      setStatusSafe('retrieving vault context...')
+      setStatusSafe('retrieving context...')
       const enriched = await buildPromptWithVaultContext(text)
       content = enriched.content
       injectedMatches = enriched.matchCount
@@ -379,8 +835,7 @@ export const App = () => {
 
     const forceAgentMode = attachedPaths.length > 0
     if (attachedPaths.length > 0) {
-      const pathList = attachedPaths.map((p) => `  - ${p}`).join('\n')
-      content = `${content}\n\n[Attached files/folders — use read_file or list_directory to access them]\n${pathList}`
+      content = `${content}\n\n[Attached files/folders]\n${attachedPaths.map((p) => `  - ${p}`).join('\n')}`
       setAttachedPaths([])
     }
 
@@ -389,9 +844,7 @@ export const App = () => {
       if (injectedMatches > 0) {
         next.push({
           type: 'thinking',
-          content: fallbackContextUsed
-            ? 'Loaded broad vault context from recent notes.'
-            : `Auto-loaded vault context from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
+          content: fallbackContextUsed ? 'Loaded broad vault context.' : `Loaded ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
         })
       }
       return next
@@ -402,12 +855,7 @@ export const App = () => {
 
     if (!useAgentMode) {
       streamUnsubscribeRef.current = window.jarvis.chatStream(
-        {
-          model: selectedModel,
-          messages,
-          stream: true,
-          max_tokens: 256
-        },
+        { model: selectedModel, messages, stream: true, max_tokens: 256 },
         (event) => {
           switch (event.type) {
             case 'token':
@@ -416,17 +864,12 @@ export const App = () => {
               scheduleTokenFlush()
               break
             case 'done':
-              flushImmediately()
-              setStatusSafe('ready')
-              setBusy(false)
-              teardownStream()
+              flushImmediately(); setStatusSafe('ready'); setBusy(false); teardownStream()
               break
             case 'error':
               flushImmediately()
               setEntries((prev) => [...prev, { type: 'error', content: event.message ?? 'Stream failed' }])
-              setStatusSafe('ready')
-              setBusy(false)
-              teardownStream()
+              setStatusSafe('ready'); setBusy(false); teardownStream()
               break
           }
         }
@@ -448,8 +891,7 @@ export const App = () => {
           break
         case 'tool_call':
           flushImmediately()
-          setStatusSafe(`calling ${event.name}...`)
-          // If there was a streamed assistant entry before tool calls, reclassify it as thinking
+          setStatusSafe(`${event.name}...`)
           setEntries((prev) => {
             const last = prev[prev.length - 1]
             if (last && last.type === 'assistant') {
@@ -466,354 +908,224 @@ export const App = () => {
           flushImmediately()
           setEntries((prev) => [
             ...prev,
-            { type: 'tool_result', content: event.output.slice(0, 2000) + (event.output.length > 2000 ? '\n...(truncated)' : '') }
+            { type: 'tool_result', content: event.output.slice(0, 2000) + (event.output.length > 2000 ? '\n...' : '') }
           ])
           break
         case 'text':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
-          setStatusSafe('ready')
-          setBusy(false)
-          teardownStream()
+          setStatusSafe('ready'); setBusy(false); teardownStream()
           break
         case 'done':
-          flushImmediately()
-          setStatusSafe('ready')
-          setBusy(false)
-          teardownStream()
+          flushImmediately(); setStatusSafe('ready'); setBusy(false); teardownStream()
           break
         case 'error':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'error', content: event.message }])
-          setStatusSafe('ready')
-          setBusy(false)
-          teardownStream()
+          setStatusSafe('ready'); setBusy(false); teardownStream()
           break
       }
     })
   }, [
-    attachedPaths,
-    buildPromptWithVaultContext,
-    chatMode,
-    scheduleTokenFlush,
-    selectedModel,
-    setStatusSafe,
-    teardownStream,
-    useVaultContext,
-    vaultStatus.connected,
-    flushImmediately
+    attachedPaths, buildPromptWithVaultContext, chatMode,
+    scheduleTokenFlush, selectedModel, setStatusSafe,
+    teardownStream, useVaultContext, vaultStatus.connected, flushImmediately
   ])
 
   const handleSend = (): void => {
-    const nextPrompt = prompt.trim()
-    if (!nextPrompt) {
-      return
-    }
-
+    const next = prompt.trim()
+    if (!next) return
     setPrompt('')
-
-    if (busy) {
-      setQueuedPrompts((prev) => [...prev, nextPrompt])
-      return
-    }
-
-    void sendMessage(nextPrompt)
+    if (busy) { setQueuedPrompts((prev) => [...prev, next]); return }
+    void sendMessage(next)
   }
 
   useEffect(() => {
-    if (busy || queuedPrompts.length === 0) {
-      return
-    }
-
-    const [nextPrompt, ...rest] = queuedPrompts
-    if (!nextPrompt) {
-      setQueuedPrompts(rest)
-      return
-    }
-
+    if (busy || queuedPrompts.length === 0) return
+    const [next, ...rest] = queuedPrompts
+    if (!next) { setQueuedPrompts(rest); return }
     setQueuedPrompts(rest)
-    void sendMessage(nextPrompt)
+    void sendMessage(next)
   }, [busy, queuedPrompts, sendMessage])
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
+  const statusDotClass = busy ? 'status-dot--busy' : vaultStatus.connected ? 'status-dot--active' : 'status-dot--idle'
+
   return (
-    <main style={{
-      margin: 0,
-      minHeight: '100vh',
-      fontFamily: "'Space Grotesk', system-ui, sans-serif",
-      background: '#0a0a0a',
-      color: '#e8e8e8',
-      display: 'flex',
-      flexDirection: 'column'
-    }}>
-      <header style={{
-        padding: '12px 16px',
-        borderBottom: '1px solid #222',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        background: '#0d0d0d'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: '#a855f7', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>//</span>
-          <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>jarvis</span>
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: '0.7rem',
-            color: '#555',
-            marginLeft: 4
-          }}>agent</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              display: 'inline-flex',
-              border: '1px solid #333',
-              background: '#111'
-            }}
-          >
+    <>
+      <style>{CSS}</style>
+      <main className="app">
+        {/* Titlebar */}
+        <div className={`titlebar${pipMode ? ' titlebar--pip' : ''}`}>
+          <div className="titlebar-brand">
+            <span className="titlebar-mark">//</span>
+            <span className="titlebar-name">Jarvis</span>
+          </div>
+          <div className="titlebar-right">
+            <div className="status-pill">
+              <span className={`status-dot ${statusDotClass}`} />
+              {status}
+            </div>
+            {queuedPrompts.length > 0 && (
+              <span className="queue-badge">+{queuedPrompts.length} queued</span>
+            )}
             <button
               type="button"
-              onClick={() => setChatMode('fast')}
-              disabled={busy}
-              style={{
-                padding: '6px 9px',
-                border: 'none',
-                background: chatMode === 'fast' ? '#2a2a2a' : 'transparent',
-                color: chatMode === 'fast' ? '#d8d8d8' : '#6b6b6b',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: '0.7rem',
-                cursor: busy ? 'not-allowed' : 'pointer'
-              }}
+              className={`win-ctrl win-ctrl--pip${pipMode ? ' win-ctrl--pip-active' : ''}`}
+              onClick={handleTogglePip}
+              title={pipMode ? 'Exit PiP' : 'PiP mode'}
             >
-              fast
+              {pipMode ? '[]' : '..'}
             </button>
             <button
               type="button"
-              onClick={() => setChatMode('agent')}
-              disabled={busy}
-              style={{
-                padding: '6px 9px',
-                border: 'none',
-                background: chatMode === 'agent' ? '#2a2a2a' : 'transparent',
-                color: chatMode === 'agent' ? '#d8d8d8' : '#6b6b6b',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: '0.7rem',
-                cursor: busy ? 'not-allowed' : 'pointer'
-              }}
+              className="win-ctrl"
+              onClick={() => window.jarvis.minimize()}
+              title="Minimize"
             >
-              agent
+              _
+            </button>
+            <button
+              type="button"
+              className="win-ctrl win-ctrl--close"
+              onClick={() => window.jarvis.closeWindow()}
+              title="Close"
+            >
+              x
             </button>
           </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className={`toolbar${pipMode ? ' toolbar--pip' : ''}`}>
+          <div className="tb-group">
+            <button
+              type="button"
+              className={`tb-btn ${chatMode === 'fast' ? 'tb-btn--active' : ''}`}
+              onClick={() => setChatMode('fast')}
+              disabled={busy}
+            >Fast</button>
+            <button
+              type="button"
+              className={`tb-btn ${chatMode === 'agent' ? 'tb-btn--active' : ''}`}
+              onClick={() => setChatMode('agent')}
+              disabled={busy}
+            >Agent</button>
+          </div>
+
+          {!pipMode && (
+            <button
+              type="button"
+              className={`tb-btn tb-btn--accent ${vaultStatus.connected ? 'tb-btn--active' : ''}`}
+              onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
+              disabled={busy}
+            >
+              {vaultStatus.connected ? connectedVaultName : 'Vault'}
+            </button>
+          )}
+
+          {!pipMode && vaultStatus.connected && (
+            <button
+              type="button"
+              className={`tb-btn tb-btn--accent ${useVaultContext ? 'tb-btn--active' : ''}`}
+              onClick={() => setUseVaultContext((p) => !p)}
+              disabled={busy}
+            >
+              Context {useVaultContext ? 'On' : 'Off'}
+            </button>
+          )}
+
+          {!pipMode && canSaveReply && (
+            <button type="button" className="tb-btn tb-btn--green" onClick={handleSaveLastReply}>
+              Save
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => setUseVaultContext((prev) => !prev)}
-            disabled={busy || !vaultStatus.connected}
-            style={{
-              padding: '6px 10px',
-              border: '1px solid #333',
-              background: useVaultContext && vaultStatus.connected ? '#1a1a2a' : '#111',
-              color: useVaultContext && vaultStatus.connected ? '#9ca3ff' : '#777',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.7rem',
-              cursor: busy || !vaultStatus.connected ? 'not-allowed' : 'pointer'
-            }}
-            title="Auto-inject relevant Obsidian note context into prompts"
-          >
-            vault ctx {useVaultContext ? 'on' : 'off'}
-          </button>
-          <button
-            type="button"
-            onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
+            className="tb-btn tb-btn--screen"
+            onClick={handleScreenCapture}
             disabled={busy}
-            style={{
-              padding: '6px 10px',
-              border: `1px solid ${vaultStatus.connected ? '#3f3f5f' : '#333'}`,
-              background: vaultStatus.connected ? '#191930' : '#111',
-              color: vaultStatus.connected ? '#9ca3ff' : '#777',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.72rem',
-              cursor: busy ? 'not-allowed' : 'pointer'
-            }}
+            title="Capture screen"
           >
-            {vaultStatus.connected ? 'vault on' : 'connect vault'}
+            {pipMode ? 'S' : 'Screen'}
           </button>
-          <button
-            type="button"
-            onClick={handleSaveLastReply}
-            disabled={!canSaveReply}
-            style={{
-              padding: '6px 10px',
-              border: '1px solid #333',
-              background: canSaveReply ? '#111' : '#0f0f0f',
-              color: canSaveReply ? '#a855f7' : '#555',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.72rem',
-              cursor: canSaveReply ? 'pointer' : 'not-allowed'
-            }}
-          >
-            save reply
-          </button>
-          {vaultStatus.connected && (
-            <span style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.68rem',
-              color: '#6f6fa8'
-            }}>
-              {connectedVaultName} ({vaultStatus.noteCount})
+
+          <div className="tb-spacer" />
+
+          {!pipMode && ragInfo && ragInfo.totalChunks > 0 && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#34d399', boxShadow: '0 0 6px rgba(52,211,153,0.4)' }} />
+              RAG {ragInfo.totalChunks}
             </span>
           )}
+
+          {!pipMode && vaultStatus.connected && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#a855f7', boxShadow: '0 0 6px rgba(168,85,247,0.4)' }} />
+              {vaultStatus.noteCount} notes
+            </span>
+          )}
+
           <select
+            className="tb-select"
             value={selectedModel}
             onChange={(e) => setSelectedModel(e.target.value)}
-            style={{
-              padding: '6px 10px',
-              border: '1px solid #333',
-              background: '#111',
-              color: '#ccc',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.75rem'
-            }}
           >
             {models.map((model) => (
               <option key={model.id} value={model.id}>{model.id}</option>
             ))}
           </select>
-          <span style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: '0.7rem',
-            color: busy ? '#a855f7' : '#444'
-          }}>{status}</span>
-          {queuedPrompts.length > 0 && (
-            <span style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.68rem',
-              color: '#7d7d7d'
-            }}>
-              queue {queuedPrompts.length}
-            </span>
+        </div>
+
+        {/* Chat */}
+        <div className="chat-area">
+          <ChatView entries={entries} isStreaming={busy} compact={pipMode} />
+        </div>
+
+        {/* Attachments */}
+        {attachedPaths.length > 0 && (
+          <div className="attach-bar">
+            {attachedPaths.map((p, i) => (
+              <span key={i} className="attach-chip" style={{ animationDelay: `${i * 0.06}s` }}>
+                {p.split('/').pop()}
+                <span className="attach-chip-x" onClick={() => removeAttachment(i)}>x</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className={`input-area${pipMode ? ' input-area--pip' : ''}`}>
+          {!pipMode && (
+            <div className="input-actions">
+              <button type="button" className="input-action-btn" onClick={handleAttachFiles} disabled={busy} title="Files">+</button>
+              <button type="button" className="input-action-btn" onClick={handleAttachFolder} disabled={busy} title="Folder">/</button>
+            </div>
           )}
-        </div>
-      </header>
-
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        <ChatView entries={entries} isStreaming={busy} />
-      </div>
-
-      {attachedPaths.length > 0 && (
-        <div style={{
-          padding: '6px 16px',
-          background: '#111',
-          borderTop: '1px solid #222',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 6
-        }}>
-          {attachedPaths.map((p, i) => (
-            <span key={i} style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '3px 8px',
-              background: '#1a1a2a',
-              border: '1px solid #333',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.7rem',
-              color: '#a855f7'
-            }}>
-              {p.split('/').pop()}
-              <span
-                onClick={() => removeAttachment(i)}
-                style={{ cursor: 'pointer', color: '#666', marginLeft: 2 }}
-              >x</span>
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div style={{
-        padding: '12px 16px',
-        borderTop: '1px solid #222',
-        background: '#0d0d0d',
-        display: 'flex',
-        gap: 8,
-        alignItems: 'flex-end'
-      }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div className="input-wrap">
+            <textarea
+              className="input-field"
+              rows={1}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={pipMode ? 'Ask Jarvis...' : vaultStatus.connected ? `Message Jarvis... (${connectedVaultName})` : 'Message Jarvis...'}
+            />
+          </div>
           <button
             type="button"
-            onClick={handleAttachFiles}
-            disabled={busy}
-            title="Attach files"
-            style={{
-              padding: '6px 10px',
-              border: '1px solid #333',
-              background: '#111',
-              color: '#888',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.72rem',
-              cursor: busy ? 'not-allowed' : 'pointer'
-            }}
-          >file</button>
-          <button
-            type="button"
-            onClick={handleAttachFolder}
-            disabled={busy}
-            title="Attach folder"
-            style={{
-              padding: '6px 10px',
-              border: '1px solid #333',
-              background: '#111',
-              color: '#888',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: '0.72rem',
-              cursor: busy ? 'not-allowed' : 'pointer'
-            }}
-          >folder</button>
+            className={`send-btn ${!canSend ? 'send-btn--disabled' : busy ? 'send-btn--queuing' : 'send-btn--ready'}`}
+            disabled={!canSend}
+            onClick={handleSend}
+          >
+            {busy ? (pipMode ? 'Q' : 'Queue') : (pipMode ? '>' : 'Send')}
+          </button>
         </div>
-        <textarea
-          rows={2}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={vaultStatus.connected ? 'Ask Jarvis... (Obsidian vault connected)' : 'Ask Jarvis...'}
-          style={{
-            flex: 1,
-            border: '1px solid #333',
-            background: '#111',
-            color: '#e8e8e8',
-            padding: '10px 12px',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: '0.85rem',
-            resize: 'none',
-            outline: 'none'
-          }}
-        />
-        <button
-          type="button"
-          disabled={!canSend}
-          onClick={handleSend}
-          style={{
-            padding: '10px 20px',
-            border: 'none',
-            background: canSend ? '#a855f7' : '#222',
-            color: canSend ? '#000' : '#555',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 600,
-            fontSize: '0.82rem',
-            cursor: canSend ? 'pointer' : 'not-allowed',
-            alignSelf: 'flex-end'
-          }}
-        >
-          {busy ? 'Queue' : 'Run'}
-        </button>
-      </div>
-    </main>
+      </main>
+    </>
   )
 }

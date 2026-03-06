@@ -2,16 +2,21 @@ import {
   createAgentService,
   createChatService,
   createConfigManager,
+  createEmbeddingService,
   createObsidianVaultService,
+  createRagService,
   createRuntimeSelection,
   createTranscriptStore,
+  createVectorStore,
   type AgentService,
   type ChatService,
   type ConfigManager,
   type EngineProvider,
   type EngineAdapter,
   type ModelManager,
-  type ObsidianVaultService
+  type ObsidianVaultService,
+  type RagService,
+  type SystemToolCallbacks
 } from '@jarvis/core'
 
 export interface DesktopServices {
@@ -22,9 +27,10 @@ export interface DesktopServices {
   provider: EngineProvider
   configManager: ConfigManager
   obsidianVaultService: ObsidianVaultService
+  ragService: RagService
 }
 
-export const createDesktopServices = (): DesktopServices => {
+export const createDesktopServices = (system?: SystemToolCallbacks): DesktopServices => {
   const runtime = createRuntimeSelection()
   const modelManager = runtime.modelManager
   const configManager = createConfigManager({
@@ -40,9 +46,20 @@ export const createDesktopServices = (): DesktopServices => {
     transcriptStore,
     configManager
   })
+
+  const embeddingService = createEmbeddingService()
+  const vectorStore = createVectorStore()
+  vectorStore.load()
+  const ragService = createRagService({ embeddingService, vectorStore })
+
   const agentService = createAgentService(runtime.engine, modelManager, {
-    obsidianVault: obsidianVaultService
+    obsidianVault: obsidianVaultService,
+    ragService,
+    system
   })
+
+  // Auto-pull embedding model in the background (non-blocking)
+  embeddingService.ensureModel().catch(() => {})
 
   return {
     chatService,
@@ -51,6 +68,7 @@ export const createDesktopServices = (): DesktopServices => {
     engine: runtime.engine,
     provider: runtime.provider,
     configManager,
-    obsidianVaultService
+    obsidianVaultService,
+    ragService
   }
 }

@@ -36,7 +36,7 @@ export { createAgentService } from './services/agent-service.js'
 export type { AgentService, CreateAgentServiceOptions } from './services/agent-service.js'
 
 export { agentTools, createAgentTools, executeTool } from './tools/index.js'
-export type { ToolExecutionContext } from './tools/index.js'
+export type { ToolExecutionContext, SystemToolCallbacks } from './tools/index.js'
 
 export { createObsidianVaultService } from './services/obsidian-vault.js'
 export type {
@@ -47,6 +47,15 @@ export type {
   ObsidianWriteResult,
   CreateObsidianVaultServiceOptions
 } from './services/obsidian-vault.js'
+
+export { createEmbeddingService } from './services/embedding-service.js'
+export type { EmbeddingService, CreateEmbeddingServiceOptions } from './services/embedding-service.js'
+
+export { createVectorStore } from './services/vector-store.js'
+export type { VectorStore, VectorChunk, SearchResult, CreateVectorStoreOptions } from './services/vector-store.js'
+
+export { createRagService } from './services/rag-service.js'
+export type { RagService, RagResult, RagStats, CreateRagServiceOptions } from './services/rag-service.js'
 
 export { createRuntimeSelection } from './runtime/create-runtime.js'
 export type { RuntimeSelection, EngineProvider } from './runtime/create-runtime.js'

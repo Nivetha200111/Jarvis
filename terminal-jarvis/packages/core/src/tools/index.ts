@@ -2,9 +2,22 @@ import { execSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { ToolDefinition } from '../types/index.js'
 import type { ObsidianVaultService } from '../services/obsidian-vault.js'
+import type { RagService } from '../services/rag-service.js'
+
+export interface SystemToolCallbacks {
+  captureScreen?: () => Promise<{ path: string; width: number; height: number; timestamp: string; activeWindow: string }>
+  getSystemInfo?: () => Promise<Record<string, string>>
+  getActiveWindow?: () => Promise<string>
+  openUrl?: (url: string) => Promise<void>
+  notify?: (title: string, body: string) => Promise<void>
+  getClipboard?: () => Promise<string>
+  setClipboard?: (text: string) => Promise<void>
+}
 
 export interface ToolExecutionContext {
   obsidianVault?: ObsidianVaultService
+  ragService?: RagService
+  system?: SystemToolCallbacks
 }
 
 const toObjectSchema = (
@@ -15,6 +28,81 @@ const toObjectSchema = (
   properties,
   required
 })
+
+const systemTools: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'screenshot',
+      description: 'Capture the current screen and get information about what the user is doing. Returns file path, dimensions, active window title, and timestamp. Use this when the user asks about what is on their screen or needs help with what they are looking at.',
+      parameters: toObjectSchema({})
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_system_info',
+      description: 'Get system information including hostname, user, OS, CPU, memory usage, and uptime.',
+      parameters: toObjectSchema({})
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_active_window',
+      description: 'Get the title of the currently focused window on the user\'s screen.',
+      parameters: toObjectSchema({})
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_url',
+      description: 'Open a URL in the user\'s default browser.',
+      parameters: toObjectSchema(
+        {
+          url: { type: 'string', description: 'The URL to open' }
+        },
+        ['url']
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'notify',
+      description: 'Send a desktop notification to the user.',
+      parameters: toObjectSchema(
+        {
+          title: { type: 'string', description: 'Notification title' },
+          body: { type: 'string', description: 'Notification body text' }
+        },
+        ['title', 'body']
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_clipboard',
+      description: 'Read the current clipboard text content.',
+      parameters: toObjectSchema({})
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_clipboard',
+      description: 'Set the clipboard content to the given text.',
+      parameters: toObjectSchema(
+        {
+          text: { type: 'string', description: 'Text to copy to clipboard' }
+        },
+        ['text']
+      )
+    }
+  }
+]
 
 const baseTools: ToolDefinition[] = [
   {
@@ -164,6 +252,45 @@ const obsidianTools: ToolDefinition[] = [
   }
 ]
 
+const ragTools: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'rag_search',
+      description: 'Search the local knowledge base for semantically relevant information. Use this to find relevant context from previously indexed files and notes.',
+      parameters: toObjectSchema(
+        {
+          query: { type: 'string', description: 'Natural language search query' },
+          limit: { type: 'number', description: 'Max results to return (default 5)' }
+        },
+        ['query']
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rag_index',
+      description: 'Index text content into the local knowledge base for future retrieval.',
+      parameters: toObjectSchema(
+        {
+          source: { type: 'string', description: 'Source identifier (e.g. file path or label)' },
+          text: { type: 'string', description: 'Text content to index' }
+        },
+        ['source', 'text']
+      )
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rag_stats',
+      description: 'Get statistics about the local knowledge base (number of chunks, sources).',
+      parameters: toObjectSchema({})
+    }
+  }
+]
+
 const parseLimit = (value: unknown, fallback: number, max: number): number => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return fallback
@@ -186,16 +313,21 @@ const formatLargeText = (content: string, maxChars = 8_000): string => {
   return `${content.slice(0, maxChars)}\n...(truncated ${remaining} chars)`
 }
 
-export const createAgentTools = (context: ToolExecutionContext = {}): ToolDefinition[] =>
-  context.obsidianVault ? [...baseTools, ...obsidianTools] : baseTools
+export const createAgentTools = (context: ToolExecutionContext = {}): ToolDefinition[] => {
+  const tools = [...baseTools]
+  if (context.system) tools.push(...systemTools)
+  if (context.obsidianVault) tools.push(...obsidianTools)
+  if (context.ragService) tools.push(...ragTools)
+  return tools
+}
 
 export const agentTools: ToolDefinition[] = createAgentTools()
 
-export const executeTool = (
+export const executeTool = async (
   name: string,
   args: Record<string, unknown>,
   context: ToolExecutionContext = {}
-): { output: string; success: boolean } => {
+): Promise<{ output: string; success: boolean }> => {
   try {
     switch (name) {
       case 'run_command': {
@@ -233,6 +365,65 @@ export const executeTool = (
         const listing = extracted.map((e) => `${e.isDirectory() ? '[dir] ' : '      '}${e.name}`).join('\n')
         return { output: `Extracted to ${destination}:\n${listing}`, success: true }
       }
+      // System tools
+      case 'screenshot': {
+        if (!context.system?.captureScreen) {
+          return { output: 'Screen capture is unavailable in this environment', success: false }
+        }
+        const capture = await context.system.captureScreen()
+        return {
+          output: `Screenshot saved: ${capture.path}\nDimensions: ${capture.width}x${capture.height}\nActive window: ${capture.activeWindow}\nTimestamp: ${capture.timestamp}`,
+          success: true
+        }
+      }
+      case 'get_system_info': {
+        if (!context.system?.getSystemInfo) {
+          return { output: 'System info is unavailable in this environment', success: false }
+        }
+        const info = await context.system.getSystemInfo()
+        const output = Object.entries(info).map(([k, v]) => `${k}: ${v}`).join('\n')
+        return { output, success: true }
+      }
+      case 'get_active_window': {
+        if (!context.system?.getActiveWindow) {
+          return { output: 'Active window detection is unavailable in this environment', success: false }
+        }
+        const title = await context.system.getActiveWindow()
+        return { output: title, success: true }
+      }
+      case 'open_url': {
+        if (!context.system?.openUrl) {
+          return { output: 'URL opening is unavailable in this environment', success: false }
+        }
+        const url = String(args.url ?? '')
+        await context.system.openUrl(url)
+        return { output: `Opened ${url}`, success: true }
+      }
+      case 'notify': {
+        if (!context.system?.notify) {
+          return { output: 'Desktop notifications are unavailable in this environment', success: false }
+        }
+        const title = String(args.title ?? '')
+        const body = String(args.body ?? '')
+        await context.system.notify(title, body)
+        return { output: `Notification sent: ${title}`, success: true }
+      }
+      case 'get_clipboard': {
+        if (!context.system?.getClipboard) {
+          return { output: 'Clipboard access is unavailable in this environment', success: false }
+        }
+        const text = await context.system.getClipboard()
+        return { output: text || '(clipboard is empty)', success: true }
+      }
+      case 'set_clipboard': {
+        if (!context.system?.setClipboard) {
+          return { output: 'Clipboard access is unavailable in this environment', success: false }
+        }
+        const text = String(args.text ?? '')
+        await context.system.setClipboard(text)
+        return { output: `Copied ${text.length} chars to clipboard`, success: true }
+      }
+      // Obsidian tools
       case 'obsidian_status': {
         if (!context.obsidianVault) {
           return { output: 'Obsidian integration is unavailable', success: false }
@@ -314,6 +505,46 @@ export const executeTool = (
         const result = context.obsidianVault.writeNote(notePath, content, mode)
         return {
           output: `Wrote ${result.bytesWritten} bytes to ${result.path} (${result.mode})`,
+          success: true
+        }
+      }
+      // RAG tools
+      case 'rag_search': {
+        if (!context.ragService) {
+          return { output: 'RAG knowledge base is unavailable', success: false }
+        }
+
+        const query = String(args.query ?? '')
+        const limit = parseLimit(args.limit, 5, 20)
+        const results = await context.ragService.retrieve(query, limit)
+
+        if (results.length === 0) {
+          return { output: `No relevant results found for "${query}"`, success: true }
+        }
+
+        const output = results
+          .map((r) => `[${r.source} | score: ${r.score.toFixed(2)}]\n${r.text}`)
+          .join('\n---\n')
+        return { output, success: true }
+      }
+      case 'rag_index': {
+        if (!context.ragService) {
+          return { output: 'RAG knowledge base is unavailable', success: false }
+        }
+
+        const source = String(args.source ?? '')
+        const text = String(args.text ?? '')
+        const chunksAdded = await context.ragService.index(source, text)
+        return { output: `Indexed ${chunksAdded} chunks from ${source}`, success: true }
+      }
+      case 'rag_stats': {
+        if (!context.ragService) {
+          return { output: 'RAG knowledge base is unavailable', success: false }
+        }
+
+        const stats = context.ragService.getStats()
+        return {
+          output: `Knowledge base: ${stats.totalChunks} chunks from ${stats.sources.length} sources\nEmbedding model: ${stats.embeddingModel}\nSources: ${stats.sources.join(', ') || '(none)'}`,
           success: true
         }
       }

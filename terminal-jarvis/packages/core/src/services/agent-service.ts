@@ -1,9 +1,11 @@
 import type { EngineAdapter, ChatMessage, AgentEvent, ToolCall } from '../types/index.js'
 import type { ModelManager } from './model-manager.js'
 import type { ObsidianVaultService } from './obsidian-vault.js'
+import type { RagService } from './rag-service.js'
+import type { SystemToolCallbacks } from '../tools/index.js'
 import { createAgentTools, executeTool } from '../tools/index.js'
 
-const SYSTEM_PROMPT = `You are Jarvis, an agentic AI assistant running fully locally. You have tools to execute shell commands, read/write files, list directories, and extract zip archives. If Obsidian tools are available, use them for vault tasks instead of raw filesystem commands. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
+const SYSTEM_PROMPT = `You are Jarvis, a powerful agentic AI assistant running fully locally on the user's machine. You have tools to execute shell commands, read/write files, list directories, extract archives, capture screenshots, read clipboard, send notifications, open URLs, and get system information. If Obsidian tools are available, use them for vault tasks. If RAG tools are available, use rag_search to find relevant knowledge. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
 
 const MAX_ROUNDS = 15
 
@@ -13,6 +15,8 @@ export interface AgentService {
 
 export interface CreateAgentServiceOptions {
   obsidianVault?: ObsidianVaultService
+  ragService?: RagService
+  system?: SystemToolCallbacks
 }
 
 export const createAgentService = (
@@ -31,8 +35,27 @@ export const createAgentService = (
       await engine.loadModel(resolved.id)
     }
 
+    // Retrieve RAG context if available
+    let ragContext = ''
+    if (options.ragService) {
+      const lastUserMsg = [...userMessages].reverse().find((m) => m.role === 'user')
+      if (lastUserMsg) {
+        try {
+          const results = await options.ragService.retrieve(lastUserMsg.content, 5)
+          if (results.length > 0) {
+            const contextChunks = results.map((r) =>
+              `[source: ${r.source} | relevance: ${r.score.toFixed(2)}]\n${r.text}`
+            )
+            ragContext = `\n\nRelevant knowledge from indexed documents:\n---\n${contextChunks.join('\n---\n')}\n---\nUse this context to inform your response when relevant.`
+          }
+        } catch {
+          // RAG unavailable — continue without context
+        }
+      }
+    }
+
     const messages: ChatMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT + ragContext },
       ...userMessages
     ]
 
@@ -44,7 +67,7 @@ export const createAgentService = (
       let isFirstTokenInRound = true
 
       try {
-        const tools = toolsSupported ? createAgentTools({ obsidianVault: options.obsidianVault }) : []
+        const tools = toolsSupported ? createAgentTools({ obsidianVault: options.obsidianVault, ragService: options.ragService, system: options.system }) : []
         for await (const event of engine.streamChatWithTools(messages, tools)) {
           if (event.type === 'token') {
             if (isFirstTokenInRound && round === 0) {
@@ -98,7 +121,7 @@ export const createAgentService = (
 
         yield { type: 'tool_call', name, arguments: args }
 
-        const result = executeTool(name, args, { obsidianVault: options.obsidianVault })
+        const result = await executeTool(name, args, { obsidianVault: options.obsidianVault, ragService: options.ragService, system: options.system })
 
         yield { type: 'tool_result', name, output: result.output, success: result.success }
 

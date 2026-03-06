@@ -54,13 +54,19 @@ const writeBundleReadme = async (bundlePath, platform) => {
 
 Quick start:
 1. Install Ollama (https://ollama.com)
-2. Pull a model (recommended): ollama pull qwen2.5
-3. Launch Jarvis: ${launchLine}
+2. Launch Jarvis: ${launchLine}
+   (The launcher auto-pulls required models on first run)
+
+What gets set up automatically:
+- qwen2.5 — main chat/agent model
+- nomic-embed-text — local embeddings for RAG (knowledge base)
 
 Notes:
 - No npm install is required for this bundle.
 - If Ollama is not available, Jarvis falls back to a local mock model.
 - Obsidian support is built in: use "connect vault" in the desktop app.
+- RAG: uploaded files and vault notes are auto-indexed for semantic retrieval.
+- Everything runs 100% locally. No cloud, no telemetry.
 `
 
   await writeFile(join(bundlePath, 'README.txt'), content, 'utf8')
@@ -73,6 +79,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export JARVIS_ENGINE="\${JARVIS_ENGINE:-auto}"
 unset ELECTRON_RUN_AS_NODE
+
+# Auto-setup: ensure Ollama has the embedding model for RAG
+if command -v ollama &>/dev/null; then
+  echo "[jarvis] Checking embedding model..."
+  if ! ollama show nomic-embed-text &>/dev/null 2>&1; then
+    echo "[jarvis] Pulling nomic-embed-text for local RAG..."
+    ollama pull nomic-embed-text || echo "[jarvis] Warning: could not pull embedding model. RAG will be unavailable."
+  fi
+  # Also ensure a default chat model exists
+  if ! ollama show qwen2.5 &>/dev/null 2>&1; then
+    echo "[jarvis] Pulling qwen2.5 (default model)..."
+    ollama pull qwen2.5 || true
+  fi
+fi
+
 "$SCRIPT_DIR/electron/electron" "$SCRIPT_DIR/app/main.cjs"
 `
     const path = join(bundlePath, 'run-jarvis.sh')
@@ -86,6 +107,23 @@ setlocal
 set SCRIPT_DIR=%~dp0
 if "%JARVIS_ENGINE%"=="" set JARVIS_ENGINE=auto
 set ELECTRON_RUN_AS_NODE=
+
+REM Auto-setup: ensure Ollama has the embedding model for RAG
+where ollama >nul 2>&1
+if %errorlevel%==0 (
+  echo [jarvis] Checking embedding model...
+  ollama show nomic-embed-text >nul 2>&1
+  if %errorlevel% neq 0 (
+    echo [jarvis] Pulling nomic-embed-text for local RAG...
+    ollama pull nomic-embed-text
+  )
+  ollama show qwen2.5 >nul 2>&1
+  if %errorlevel% neq 0 (
+    echo [jarvis] Pulling qwen2.5 default model...
+    ollama pull qwen2.5
+  )
+)
+
 "%SCRIPT_DIR%electron\\electron.exe" "%SCRIPT_DIR%app\\main.cjs"
 `
   await writeFile(join(bundlePath, 'run-jarvis.bat'), batch, 'utf8')

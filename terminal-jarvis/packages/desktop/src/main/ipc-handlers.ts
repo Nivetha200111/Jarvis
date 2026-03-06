@@ -5,7 +5,8 @@ import type {
   ObsidianVaultStatus,
   ObsidianNoteSummary,
   ObsidianSearchHit,
-  ObsidianWriteResult
+  ObsidianWriteResult,
+  RagStats
 } from '@jarvis/core'
 import type { DesktopServices } from './create-services.js'
 
@@ -121,6 +122,18 @@ export const writeObsidianNote = (
   content: string,
   mode?: 'overwrite' | 'append'
 ): ObsidianWriteResult => services.obsidianVaultService.writeNote(notePath, content, mode)
+
+export const ragIndex = async (
+  services: DesktopServices,
+  source: string,
+  text: string
+): Promise<number> => services.ragService.index(source, text)
+
+export const ragStats = (services: DesktopServices): RagStats =>
+  services.ragService.getStats()
+
+export const ragRemoveSource = (services: DesktopServices, source: string): number =>
+  services.ragService.removeSource(source)
 
 export const toStreamPayload = (requestId: string, chunk: Omit<StreamEvent, 'requestId'>): StreamEvent => ({
   requestId,
