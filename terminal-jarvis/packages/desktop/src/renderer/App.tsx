@@ -20,6 +20,16 @@ const STREAM_STALL_TIMEOUT_MS = 90_000
 const VAULT_INDEX_NOTE_LIMIT = 2_000
 const VAULT_INDEX_IDLE_DELAY_MS = 120
 const VAULT_INDEX_TEXT_MAX_CHARS = 36_000
+const LIVE_SCREEN_REFRESH_MS = 1_800
+const VISION_MODEL_PATTERN = /(llava|vision|moondream|bakllava|qwen2\.5(?:-|:)?vl|llama3\.2-vision)/i
+
+interface LiveScreenFrame {
+  imageBase64: string
+  width: number
+  height: number
+  timestamp: string
+  activeWindow: string
+}
 
 const delay = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -369,6 +379,18 @@ const CSS = `
     color: #fbbf24;
     background: rgba(251, 191, 36, 0.08);
   }
+  .tb-btn--live {
+    color: rgba(239, 68, 68, 0.55);
+  }
+  .tb-btn--live:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+  }
+  .tb-btn--live.tb-btn--active {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.14);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.12);
+  }
   .tb-select {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
@@ -614,6 +636,9 @@ export const App = () => {
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
   const [vaultIndexing, setVaultIndexing] = useState(false)
+  const [liveScreenMode, setLiveScreenMode] = useState(false)
+  const [liveScreenFrame, setLiveScreenFrame] = useState<LiveScreenFrame | null>(null)
+  const [liveScreenError, setLiveScreenError] = useState<string | null>(null)
   const [pipMode, setPipMode] = useState(false)
   const statusRef = useRef(status)
   const busyRef = useRef(busy)
@@ -651,6 +676,43 @@ export const App = () => {
 
   useEffect(() => { statusRef.current = status }, [status])
   useEffect(() => { busyRef.current = busy }, [busy])
+
+  useEffect(() => {
+    if (!liveScreenMode) {
+      setLiveScreenFrame(null)
+      setLiveScreenError(null)
+      return
+    }
+
+    let cancelled = false
+
+    const captureFrame = async (): Promise<void> => {
+      try {
+        const frame = await window.jarvis.captureScreenFrame()
+        if (cancelled) {
+          return
+        }
+        setLiveScreenFrame(frame)
+        setLiveScreenError(null)
+      } catch (error: unknown) {
+        if (cancelled) {
+          return
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        setLiveScreenError(message)
+      }
+    }
+
+    void captureFrame()
+    const timer = setInterval(() => {
+      void captureFrame()
+    }, LIVE_SCREEN_REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [liveScreenMode])
 
   useEffect(() => {
     noteContentCacheRef.current.clear()
@@ -778,6 +840,14 @@ export const App = () => {
     const seg = p.split(/[\\/]/)
     return seg[seg.length - 1] ?? p
   }, [vaultStatus.vaultPath])
+  const selectedModelSupportsVision = useMemo(
+    () => VISION_MODEL_PATTERN.test(selectedModel),
+    [selectedModel]
+  )
+  const recommendedVisionModel = useMemo(
+    () => models.find((model) => VISION_MODEL_PATTERN.test(model.id))?.id ?? null,
+    [models]
+  )
 
   const buildPromptWithVaultContext = useCallback(async (
     userPrompt: string
@@ -1051,6 +1121,40 @@ export const App = () => {
     }
   }
 
+  const handleToggleLiveScreen = (): void => {
+    if (liveScreenMode) {
+      setLiveScreenMode(false)
+      setStatusSafe('live screen off')
+      return
+    }
+
+    if (!selectedModelSupportsVision) {
+      if (recommendedVisionModel) {
+        setSelectedModel(recommendedVisionModel)
+        setEntries((prev) => [
+          ...prev,
+          {
+            type: 'thinking',
+            content: `Live screen: switched model to ${recommendedVisionModel} for vision support.`
+          }
+        ])
+      } else {
+        pushErrorEntry('Live screen mode needs a vision model (for example: llava or qwen2.5-vl).')
+        return
+      }
+    }
+
+    setLiveScreenMode(true)
+    setStatusSafe('live screen on')
+    setEntries((prev) => [
+      ...prev,
+      {
+        type: 'thinking',
+        content: 'Live screen enabled. Jarvis will attach the latest screen frame to each prompt.'
+      }
+    ])
+  }
+
   useEffect(() => () => teardownStream(), [teardownStream])
 
   const sendMessage = useCallback(async (text: string): Promise<void> => {
@@ -1063,6 +1167,9 @@ export const App = () => {
     let injectedMatches = 0
     let contextMode: 'none' | 'keyword' | 'rag' | 'broad' = 'none'
     let contextPaths: string[] = []
+    let screenFrameAttached = false
+    let attachedFrame: LiveScreenFrame | null = null
+    let screenFrameDetails = ''
 
     if (vaultStatus.connected && useVaultContext) {
       setStatusSafe('retrieving context...')
@@ -1071,6 +1178,14 @@ export const App = () => {
       injectedMatches = enriched.matchCount
       contextMode = enriched.mode
       contextPaths = enriched.notePaths
+    }
+
+    if (liveScreenMode && liveScreenFrame && selectedModelSupportsVision) {
+      const activeWindow = liveScreenFrame.activeWindow || 'unknown'
+      screenFrameDetails = `window: ${activeWindow} @ ${liveScreenFrame.timestamp}`
+      content = `${content}\n\n[Live screen]\nActive window: ${activeWindow}\nCaptured at: ${liveScreenFrame.timestamp}`
+      screenFrameAttached = true
+      attachedFrame = liveScreenFrame
     }
 
     const forceAgentMode = attachedPaths.length > 0
@@ -1094,10 +1209,23 @@ export const App = () => {
               : `Context matched ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
         })
       }
+      if (screenFrameAttached) {
+        next.push({
+          type: 'thinking',
+          content: `Live screen frame attached (${screenFrameDetails}).`
+        })
+      }
       return next
     })
 
-    const messages = [{ role: 'user' as const, content }]
+    const userMessage: { role: 'user'; content: string; images?: string[] } = {
+      role: 'user',
+      content
+    }
+    if (attachedFrame) {
+      userMessage.images = [attachedFrame.imageBase64]
+    }
+    const messages = [userMessage]
     const useAgentMode = chatMode === 'agent' || forceAgentMode
 
     if (!useAgentMode) {
@@ -1180,7 +1308,8 @@ export const App = () => {
   }, [
     attachedPaths, buildPromptWithVaultContext, chatMode,
     scheduleTokenFlush, selectedModel, setStatusSafe,
-    teardownStream, useVaultContext, vaultStatus.connected, flushImmediately, finalizeStream, touchStreamWatchdog
+    teardownStream, useVaultContext, vaultStatus.connected, flushImmediately, finalizeStream, touchStreamWatchdog,
+    liveScreenMode, liveScreenFrame, selectedModelSupportsVision
   ])
 
   const handleSend = (): void => {
@@ -1305,12 +1434,35 @@ export const App = () => {
             {pipMode ? 'S' : 'Screen'}
           </button>
 
+          <button
+            type="button"
+            className={`tb-btn tb-btn--live ${liveScreenMode ? 'tb-btn--active' : ''}`}
+            onClick={handleToggleLiveScreen}
+            title="Continuously capture screen frames and attach to prompts"
+          >
+            {pipMode ? 'L' : liveScreenMode ? 'Live On' : 'Live'}
+          </button>
+
           <div className="tb-spacer" />
 
           {!pipMode && ragInfo && ragInfo.totalChunks > 0 && (
             <span className="tb-badge">
               <span className="tb-badge-dot" style={{ background: '#34d399', boxShadow: '0 0 6px rgba(52,211,153,0.4)' }} />
               RAG {ragInfo.totalChunks}
+            </span>
+          )}
+
+          {!pipMode && liveScreenMode && liveScreenFrame && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#ef4444', boxShadow: '0 0 6px rgba(239,68,68,0.4)' }} />
+              Live {liveScreenFrame.width}x{liveScreenFrame.height}
+            </span>
+          )}
+
+          {!pipMode && liveScreenMode && liveScreenError && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#f59e0b', boxShadow: '0 0 6px rgba(245,158,11,0.4)' }} />
+              Live degraded
             </span>
           )}
 

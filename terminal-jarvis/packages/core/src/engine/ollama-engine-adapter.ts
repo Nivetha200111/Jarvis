@@ -132,7 +132,8 @@ export class OllamaEngineAdapter implements EngineAdapter {
       keep_alive: this.keepAlive,
       messages: messages.map((message) => ({
         role: toOllamaMessageRole(message.role),
-        content: message.content
+        content: message.content,
+        ...(message.images && message.images.length > 0 ? { images: message.images } : {})
       }))
     }
 
@@ -266,6 +267,9 @@ export class OllamaEngineAdapter implements EngineAdapter {
           role: toOllamaMessageRole(message.role),
           content: message.content
         }
+        if (message.images && message.images.length > 0) {
+          mapped.images = message.images
+        }
         if (message.tool_calls) {
           mapped.tool_calls = message.tool_calls
         }
@@ -321,6 +325,9 @@ export class OllamaEngineAdapter implements EngineAdapter {
         const mapped: Record<string, unknown> = {
           role: toOllamaMessageRole(message.role),
           content: message.content
+        }
+        if (message.images && message.images.length > 0) {
+          mapped.images = message.images
         }
         if (message.tool_calls) {
           mapped.tool_calls = message.tool_calls

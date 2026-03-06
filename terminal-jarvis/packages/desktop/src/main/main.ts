@@ -75,6 +75,30 @@ const captureScreen = async (): Promise<{ path: string; width: number; height: n
   }
 }
 
+const captureScreenFrame = async (): Promise<{ imageBase64: string; width: number; height: number; timestamp: string; activeWindow: string }> => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 1024, height: 576 }
+  })
+
+  const primary = sources[0]
+  if (!primary) {
+    throw new Error('No screen source available')
+  }
+
+  const image = primary.thumbnail
+  const size = image.getSize()
+  const jpeg = image.toJPEG(72)
+
+  return {
+    imageBase64: jpeg.toString('base64'),
+    width: size.width,
+    height: size.height,
+    timestamp: new Date().toISOString(),
+    activeWindow: getActiveWindowInfo()
+  }
+}
+
 const getActiveWindowInfo = (): string => {
   try {
     if (process.platform === 'linux') {
@@ -255,11 +279,21 @@ const registerIpc = (): void => {
 
   // Screen capture
   ipcMain.handle('screen:capture', async () => captureScreen())
+  ipcMain.handle('screen:capture-frame', async () => captureScreenFrame())
   ipcMain.handle('screen:active-window', async () => getActiveWindowInfo())
   ipcMain.handle('system:info', async () => getSystemInfo())
 
   // Streaming handlers
-  ipcMain.on('chat:stream', async (event, payload: { requestId: string; request: { model?: string; messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string }[] } }) => {
+  ipcMain.on('chat:stream', async (
+    event,
+    payload: {
+      requestId: string
+      request: {
+        model?: string
+        messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }[]
+      }
+    }
+  ) => {
     try {
       await streamChat(services, payload.request, (streamEvent) => {
         event.sender.send('chat:stream', toStreamPayload(payload.requestId, streamEvent))
@@ -272,7 +306,14 @@ const registerIpc = (): void => {
     }
   })
 
-  ipcMain.on('chat:agent', async (event, payload: { requestId: string; model: string; messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string }[] }) => {
+  ipcMain.on('chat:agent', async (
+    event,
+    payload: {
+      requestId: string
+      model: string
+      messages: { role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }[]
+    }
+  ) => {
     try {
       await runAgent(services, { model: payload.model, messages: payload.messages }, (agentEvent) => {
         event.sender.send('chat:agent', toAgentStreamPayload(payload.requestId, agentEvent))

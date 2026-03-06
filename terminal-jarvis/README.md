@@ -10,6 +10,7 @@ Terminal Jarvis is designed for people who want local control, local data, and p
 - Desktop + CLI + API surfaces in one codebase
 - Built-in Obsidian vault integration
 - Local RAG retrieval from indexed files/notes
+- Optional live screen vision mode (vision-capable Ollama models)
 - Streaming output with queued prompts
 - Agent tools for shell/files/system actions
 - Linux + Windows portable release bundles

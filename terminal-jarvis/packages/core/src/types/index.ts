@@ -24,6 +24,7 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   tool_calls?: ToolCall[]
+  images?: string[]
 }
 
 export interface GenerationOptions {

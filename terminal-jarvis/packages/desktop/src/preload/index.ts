@@ -19,10 +19,22 @@ export interface ScreenCapture {
   timestamp: string
 }
 
+export interface LiveScreenFrame {
+  imageBase64: string
+  width: number
+  height: number
+  timestamp: string
+  activeWindow: string
+}
+
 export interface PreloadApi {
   chatSend(request: ChatCompletionRequest): Promise<ChatSendResponse>
   chatStream(request: ChatCompletionRequest, onEvent: (event: StreamEvent) => void): () => void
-  agentChat(model: string, messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string }>, onEvent: (event: AgentEvent) => void): () => void
+  agentChat(
+    model: string,
+    messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }>,
+    onEvent: (event: AgentEvent) => void
+  ): () => void
   openFiles(): Promise<string[]>
   openFolder(): Promise<string[]>
   modelList(): Promise<ModelInfo[]>
@@ -46,6 +58,7 @@ export interface PreloadApi {
   onPipChanged(callback: (isPip: boolean) => void): () => void
   // Screen & system
   captureScreen(): Promise<ScreenCapture>
+  captureScreenFrame(): Promise<LiveScreenFrame>
   getActiveWindow(): Promise<string>
   getSystemInfo(): Promise<Record<string, string>>
 }
@@ -105,6 +118,7 @@ const api: PreloadApi = {
   },
   // Screen & system
   captureScreen: () => ipcRenderer.invoke('screen:capture'),
+  captureScreenFrame: () => ipcRenderer.invoke('screen:capture-frame'),
   getActiveWindow: () => ipcRenderer.invoke('screen:active-window'),
   getSystemInfo: () => ipcRenderer.invoke('system:info')
 }

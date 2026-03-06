@@ -70,7 +70,10 @@ export const streamChat = async (
 
 export const runAgent = async (
   services: DesktopServices,
-  payload: { model: string; messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string }> },
+  payload: {
+    model: string
+    messages: Array<{ role: 'user' | 'assistant' | 'system' | 'tool'; content: string; images?: string[] }>
+  },
   onEvent: (event: AgentEvent) => void
 ): Promise<void> => {
   for await (const agentEvent of services.agentService.run(payload.model, payload.messages)) {

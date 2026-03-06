@@ -53,7 +53,7 @@ describe('ollama-engine-adapter', () => {
 
     const chunks: string[] = []
     for await (const chunk of adapter.generate(
-      [{ role: 'user', content: 'hi' }],
+      [{ role: 'user', content: 'hi', images: ['base64-image'] }],
       { maxTokens: 64, temperature: 0.2, topP: 0.9 }
     )) {
       chunks.push(chunk.token)
@@ -66,8 +66,10 @@ describe('ollama-engine-adapter', () => {
     const body = JSON.parse(String(init?.body)) as {
       keep_alive?: string
       options?: Record<string, number>
+      messages?: Array<{ images?: string[] }>
     }
     expect(body.keep_alive).toBe('45m')
+    expect(body.messages?.[0]?.images).toEqual(['base64-image'])
     expect(body.options).toMatchObject({
       num_predict: 64,
       temperature: 0.2,
