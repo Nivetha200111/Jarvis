@@ -44,8 +44,8 @@
         <h1>Your machine.<br/>Your model.<br/>Your data.</h1>
         <p class="lead">
           Terminal Jarvis is a fully local, agentic AI assistant. It runs models through Ollama,
-          executes shell commands, reads and writes files, includes built-in Obsidian vault tools,
-          and works across terminal, desktop, and API.
+          executes shell and system tools, includes built-in Obsidian vault integration with local RAG retrieval,
+          and works across terminal, desktop, and API with streaming + queued prompts.
           No cloud. No telemetry. Just your hardware.
         </p>
         <div class="hero-actions">
@@ -90,8 +90,8 @@ curl -fsSL https://ollama.com/install.sh | sh
 
           <div class="step">
             <div class="step-num">02</div>
-            <h3>Pull a model</h3>
-            <p>Jarvis works with any Ollama model. For agentic tool-calling, use qwen2.5. For general chat, any model works.</p>
+            <h3>Pull models (chat + retrieval)</h3>
+            <p>Jarvis works with any Ollama chat model. For best agent mode and speed, use qwen2.5 variants. For local RAG, add an embedding model.</p>
             <div class="code-block">
               <div class="code-header">
                 <span class="code-dot"></span>
@@ -99,17 +99,24 @@ curl -fsSL https://ollama.com/install.sh | sh
                 <span class="code-dot"></span>
                 <span class="code-title">terminal</span>
               </div>
-              <pre><code><span class="c-dim"># Recommended &mdash; supports tool calling (agentic)</span>
-ollama pull qwen2.5
+              <pre><code><span class="c-dim"># Recommended chat models (fast + tool-capable)</span>
+ollama pull qwen2.5:3b
+ollama pull qwen2.5:1.5b
 
-<span class="c-dim"># Alternatives</span>
-ollama pull llama3
+<span class="c-dim"># Optional retrieval model (for RAG)</span>
+ollama pull nomic-embed-text
+
+<span class="c-dim"># Other chat alternatives</span>
+ollama pull qwen2.5
+ollama pull llama3.2
 ollama pull mistral
 ollama pull gemma2</code></pre>
             </div>
             <div class="model-tags">
-              <span class="model-tag tag-agentic">qwen2.5 &mdash; agentic</span>
-              <span class="model-tag">llama3 &mdash; general</span>
+              <span class="model-tag tag-agentic">qwen2.5:3b &mdash; fast agentic</span>
+              <span class="model-tag">qwen2.5:1.5b &mdash; fastest</span>
+              <span class="model-tag">nomic-embed-text &mdash; RAG</span>
+              <span class="model-tag">llama3.2 &mdash; general</span>
               <span class="model-tag">mistral &mdash; fast</span>
               <span class="model-tag">gemma2 &mdash; compact</span>
             </div>
@@ -135,6 +142,7 @@ cd terminal-jarvis-linux-x64
 run-jarvis.bat</code></pre>
             </div>
             <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then chat. Use <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code> inside your vault.</p>
+            <p class="step-note">Jarvis automatically indexes connected vault notes for local retrieval and can queue your next prompt while a response is still generating.</p>
           </div>
         </div>
       </section>
@@ -146,33 +154,33 @@ run-jarvis.bat</code></pre>
         <div class="cap-grid">
           <div class="cap-card">
             <div class="cap-icon">$</div>
-            <h3>Shell execution</h3>
-            <p>Runs commands, installs packages, manages git repos &mdash; directly from chat.</p>
+            <h3>Agent system tools</h3>
+            <p>Runs shell commands, reads/writes files, captures screenshots, clipboard access, notifications, and browser open actions.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">&lt;&gt;</div>
-            <h3>File operations</h3>
-            <p>Reads, writes, and lists files. In Desktop, it also connects to Obsidian vault notes.</p>
+            <h3>Built-in Obsidian</h3>
+            <p>Connect your vault directly in Desktop, search/read/write notes, auto-inject context, and save replies back to daily notes.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">zip</div>
-            <h3>Archive extraction</h3>
-            <p>Extracts .zip and .tar.gz archives automatically when you need it.</p>
+            <h3>Local RAG memory</h3>
+            <p>Indexes notes/files into a local vector store and retrieves semantically relevant chunks during agent responses.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">//</div>
-            <h3>Any Ollama model</h3>
-            <p>Tool-capable models get full agent mode. Others work as plain chat. Your choice.</p>
+            <h3>Fast model defaults</h3>
+            <p>Auto-detects local Ollama models, prefers fast chat-capable options by default, and keeps embedding/rerank models out of chat selection.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">~</div>
-            <h3>Streaming output</h3>
-            <p>Responses stream token-by-token in real time. No waiting for full generation.</p>
+            <h3>Smoother desktop UX</h3>
+            <p>Token streaming, prompt queueing while generating, Picture-in-Picture mode, fast/agent mode toggle, and compact chat controls.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">0</div>
-            <h3>Zero telemetry</h3>
-            <p>No analytics, no tracking, no cloud calls. Everything stays on your machine.</p>
+            <h3>OpenAI-compatible API</h3>
+            <p>Use local OpenAI-style endpoints for chat + models while keeping compute and data fully on-device with zero telemetry.</p>
           </div>
         </div>
       </section>
@@ -184,7 +192,7 @@ run-jarvis.bat</code></pre>
             <span class="os-tag">Linux</span>
             <span class="arch">x64 / tar.gz</span>
           </div>
-          <p>Portable tarball with bundled runtime. Unpack and run <code>./run-jarvis.sh</code>.</p>
+          <p>Portable tarball with bundled runtime and desktop app. Unpack and run <code>./run-jarvis.sh</code>.</p>
           <div class="dl-actions">
             <a id="linux-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
               >Download</a
@@ -199,7 +207,7 @@ run-jarvis.bat</code></pre>
             <span class="os-tag">Windows</span>
             <span class="arch">x64 / zip</span>
           </div>
-          <p>Portable zip with bundled runtime. Unzip and run <code>run-jarvis.bat</code>.</p>
+          <p>Portable zip with bundled runtime and desktop app. Unzip and run <code>run-jarvis.bat</code>.</p>
           <div class="dl-actions">
             <a id="windows-download" class="btn btn-primary btn-sm" href="https://github.com/Nivetha200111/Jarvis/releases" target="_blank" rel="noreferrer"
               >Download</a
@@ -216,17 +224,17 @@ run-jarvis.bat</code></pre>
         <div class="feature">
           <span class="feature-num">01</span>
           <h3>Terminal REPL</h3>
-          <p>Interactive chat, streaming, pipe mode.</p>
+          <p>Interactive chat, streaming output, and <code>--pipe</code> automation mode.</p>
         </div>
         <div class="feature">
           <span class="feature-num">02</span>
           <h3>Desktop App</h3>
-          <p>Electron UI with live streaming, Obsidian vault connect, and file uploads.</p>
+          <p>Electron UI with fast/agent modes, Obsidian + RAG, screen tools, queued prompts, and PiP mode.</p>
         </div>
         <div class="feature">
           <span class="feature-num">03</span>
           <h3>OpenAI-Compatible API</h3>
-          <p>Point any SDK at <code>http://127.0.0.1:8080/v1</code>. Data stays on-device.</p>
+          <p>Point any SDK at <code>http://127.0.0.1:8080/v1</code> for local chat and model listing.</p>
         </div>
       </section>
 
@@ -235,9 +243,9 @@ run-jarvis.bat</code></pre>
         <div class="manifesto-points">
           <div class="point">No cloud calls required</div>
           <div class="point">Conversations stored at <code>~/.jarvis</code></div>
-          <div class="point">Linux + Windows native</div>
-          <div class="point">Agentic tool calling</div>
-          <div class="point">File &amp; folder uploads</div>
+          <div class="point">Linux + Windows releases</div>
+          <div class="point">Agentic + local RAG retrieval</div>
+          <div class="point">Vault context + file/folder uploads</div>
         </div>
       </section>
     </main>

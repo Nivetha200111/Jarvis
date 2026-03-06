@@ -76,9 +76,11 @@ const showNoReleaseMessage = () => {
   }
 }
 
-const showReadyMessage = () => {
+const showReadyMessage = (tagName) => {
   if (releaseNoteLabel) {
-    releaseNoteLabel.textContent = 'Release artifacts detected. Download buttons now point to the latest assets.'
+    releaseNoteLabel.textContent = tagName
+      ? `Latest release ${tagName} detected. Download buttons now point to current Linux/Windows assets.`
+      : 'Release artifacts detected. Download buttons now point to the latest assets.'
   }
 }
 
@@ -105,6 +107,7 @@ const configureDownloadLinks = async () => {
 
     const payload = await response.json()
     const assets = Array.isArray(payload.assets) ? payload.assets : []
+    const tagName = typeof payload.tag_name === 'string' ? payload.tag_name : ''
 
     const linuxAsset = getAsset(assets, /linux.*(x64|amd64).*(\.tar\.gz|\.appimage)$/i)
     const windowsAsset = getAsset(assets, /windows.*(x64|amd64).*(\.zip|\.exe)$/i)
@@ -123,7 +126,7 @@ const configureDownloadLinks = async () => {
     if (!linuxUrl && !windowsUrl) {
       showNoReleaseMessage()
     } else {
-      showReadyMessage()
+      showReadyMessage(tagName)
     }
 
     updateRecommendedButton(os, linuxUrl, windowsUrl)
