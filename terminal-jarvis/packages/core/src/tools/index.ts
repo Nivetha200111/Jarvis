@@ -483,7 +483,7 @@ export const executeTool = async (
         const results = context.obsidianVault.searchNotes(query, limit)
 
         if (results.length === 0) {
-          return { output: `No notes matched "${query}"`, success: true }
+          return { output: `No direct note matches yet for "${query}". Try broader keywords or use obsidian_list_notes.`, success: true }
         }
 
         const output = results
@@ -525,7 +525,7 @@ export const executeTool = async (
         const results = await context.ragService.retrieve(query, limit)
 
         if (results.length === 0) {
-          return { output: `No relevant results found for "${query}"`, success: true }
+          return { output: `Knowledge base has no strong semantic matches for "${query}" yet. Try broader keywords or index more content.`, success: true }
         }
 
         const output = results

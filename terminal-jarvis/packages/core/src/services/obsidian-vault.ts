@@ -366,7 +366,12 @@ export const createObsidianVaultService = (
     const baseTermStems = new Set<string>(
       baseTerms.flatMap((term) => [term, stemTerm(term)])
     )
-    const minimumBaseMatches = baseTerms.length === 0 ? 0 : baseTerms.length === 1 ? 1 : 2
+    const hasEndingIntent = baseTerms.some((term) => ENDING_TERMS.has(term) || ENDING_TERMS.has(stemTerm(term)))
+    const minimumBaseMatches = baseTerms.length === 0
+      ? 0
+      : hasEndingIntent || baseTerms.length <= 2
+        ? 1
+        : 2
     const scoredResults: Array<ObsidianSearchHit & { score: number; updatedAt: number }> = []
 
     for (const entry of entries) {

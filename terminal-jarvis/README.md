@@ -64,6 +64,7 @@ Two ways to integrate with Obsidian:
 - Model: from `GET /v1/models`
 
 Detailed guide: `docs/obsidian-integration.md`
+Release checklist: `docs/ship-readiness.md`
 
 ## Security Defaults
 

@@ -8,7 +8,29 @@ import { createAgentTools, executeTool } from '../tools/index.js'
 const SYSTEM_PROMPT = `You are Jarvis, a powerful agentic AI assistant running fully locally on the user's machine. You have tools to execute shell commands, read/write files, list directories, extract archives, capture screenshots, read clipboard, send notifications, open URLs, and get system information. If Obsidian tools are available, use them for vault tasks. If RAG tools are available, use rag_search to find relevant knowledge. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
 
 const MAX_ROUNDS = 15
+const VAULT_CONTEXT_NOTE_LIMIT = 3
+const VAULT_CONTEXT_CHAR_BUDGET = 4_800
 let hasWarnedAboutUnrestrictedTools = false
+
+const trimRagSourceLabel = (source: string): string =>
+  source
+    .replace(/^vault:/, '')
+    .replace(/@\d+$/u, '')
+
+const toVaultExcerpt = (content: string, maxChars = 1200): string => {
+  if (!content) {
+    return ''
+  }
+
+  const normalized = content.replace(/\s+/gu, ' ').trim()
+  if (normalized.length <= maxChars) {
+    return normalized
+  }
+
+  const head = normalized.slice(0, Math.floor(maxChars * 0.65))
+  const tail = normalized.slice(-Math.floor(maxChars * 0.35))
+  return `${head}\n...\n${tail}`
+}
 
 export interface AgentService {
   run(modelId: string, userMessages: ChatMessage[]): AsyncGenerator<AgentEvent>
@@ -44,27 +66,63 @@ export const createAgentService = (
       await engine.loadModel(resolved.id)
     }
 
+    const lastUserMsg = [...userMessages].reverse().find((message) => message.role === 'user')
+
+    // Retrieve direct vault context when available. This improves first-response
+    // quality even before background RAG indexing has completed.
+    let vaultContext = ''
+    if (options.obsidianVault && lastUserMsg) {
+      try {
+        const hits = options.obsidianVault
+          .searchNotes(lastUserMsg.content, VAULT_CONTEXT_NOTE_LIMIT)
+          .slice(0, VAULT_CONTEXT_NOTE_LIMIT)
+
+        if (hits.length > 0) {
+          const blocks: string[] = []
+          let consumed = 0
+
+          for (const hit of hits) {
+            const content = options.obsidianVault.readNote(hit.path)
+            const excerpt = toVaultExcerpt(content, 1_300)
+            if (!excerpt) {
+              continue
+            }
+
+            const block = `[vault:${hit.path}:${hit.line}]\n${excerpt}`
+            if (consumed + block.length > VAULT_CONTEXT_CHAR_BUDGET) {
+              break
+            }
+            blocks.push(block)
+            consumed += block.length
+          }
+
+          if (blocks.length > 0) {
+            vaultContext = `\n\nRelevant vault context:\n---\n${blocks.join('\n---\n')}\n---\nUse this context when answering vault-related questions.`
+          }
+        }
+      } catch {
+        // Obsidian context unavailable — continue without blocking response generation.
+      }
+    }
+
     // Retrieve RAG context if available
     let ragContext = ''
-    if (options.ragService) {
-      const lastUserMsg = [...userMessages].reverse().find((m) => m.role === 'user')
-      if (lastUserMsg) {
-        try {
-          const results = await options.ragService.retrieve(lastUserMsg.content, 5)
-          if (results.length > 0) {
-            const contextChunks = results.map((r) =>
-              `[source: ${r.source} | relevance: ${r.score.toFixed(2)}]\n${r.text}`
-            )
-            ragContext = `\n\nRelevant knowledge from indexed documents:\n---\n${contextChunks.join('\n---\n')}\n---\nUse this context to inform your response when relevant.`
-          }
-        } catch {
-          // RAG unavailable — continue without context
+    if (options.ragService && lastUserMsg) {
+      try {
+        const results = await options.ragService.retrieve(lastUserMsg.content, 5)
+        if (results.length > 0) {
+          const contextChunks = results.map((result) =>
+            `[source: ${trimRagSourceLabel(result.source)} | relevance: ${result.score.toFixed(2)}]\n${result.text}`
+          )
+          ragContext = `\n\nRelevant knowledge from indexed documents:\n---\n${contextChunks.join('\n---\n')}\n---\nUse this context to inform your response when relevant.`
         }
+      } catch {
+        // RAG unavailable — continue without context
       }
     }
 
     const messages: ChatMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT + ragContext },
+      { role: 'system', content: SYSTEM_PROMPT + vaultContext + ragContext },
       ...userMessages
     ]
 
@@ -124,9 +182,16 @@ export const createAgentService = (
 
       for (const toolCall of toolCalls) {
         const name = toolCall.function.name
-        const args = typeof toolCall.function.arguments === 'string'
-          ? JSON.parse(toolCall.function.arguments) as Record<string, unknown>
-          : toolCall.function.arguments
+        let args: Record<string, unknown>
+        if (typeof toolCall.function.arguments === 'string') {
+          try {
+            args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
+          } catch {
+            args = {}
+          }
+        } else {
+          args = toolCall.function.arguments
+        }
 
         yield { type: 'tool_call', name, arguments: args }
 

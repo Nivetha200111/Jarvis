@@ -10,10 +10,47 @@ const DISCONNECTED_VAULT_STATUS: ObsidianVaultStatus = {
   noteCount: 0
 }
 const ENDING_INTENT_PATTERN = /\b(end|ending|ends|final|last|conclusion|epilogue|finish)\b/i
-const CONTEXT_BUDGET_CHARS = 9_000
-const RECENT_NOTE_SCAN_LIMIT = 120
+const CONTEXT_BUDGET_CHARS = 7_000
+const FALLBACK_NOTE_SCAN_LIMIT = 2_000
 const BROAD_CONTEXT_NOTE_LIMIT = 8
 const MATCH_CONTEXT_NOTE_LIMIT = 3
+const TOKEN_FLUSH_INTERVAL_MS = 40
+const STREAM_STALL_TIMEOUT_MS = 90_000
+const VAULT_INDEX_NOTE_LIMIT = 2_000
+const VAULT_INDEX_IDLE_DELAY_MS = 120
+
+const delay = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+const toPromptTerms = (query: string): string[] => {
+  const tokens = query.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []
+  return [...new Set(tokens)]
+}
+
+const scoreFallbackNotePath = (notePath: string, queryTerms: string[]): number => {
+  if (queryTerms.length === 0) {
+    return 0
+  }
+
+  const lowerPath = notePath.toLowerCase()
+  let score = 0
+
+  for (const term of queryTerms) {
+    if (lowerPath.includes(term)) {
+      score += 3
+    }
+  }
+
+  return score
+}
+
+const toVaultSourceKey = (notePath: string, updatedAt: number): string =>
+  `vault:${notePath}@${Math.floor(updatedAt)}`
+
+const toVaultSourcePrefix = (notePath: string): string =>
+  `vault:${notePath}@`
 
 const createContextExcerpt = (
   content: string,
@@ -463,7 +500,12 @@ const CSS = `
     transition-duration: 0.08s;
   }
   .input-action-btn:disabled { opacity: 0.25; cursor: not-allowed; }
-  .input-wrap { flex: 1; }
+  .input-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
   .input-field {
     width: 100%;
     border: 1px solid rgba(255, 255, 255, 0.07);
@@ -524,6 +566,12 @@ const CSS = `
     border: 1px solid rgba(168, 85, 247, 0.12);
     animation: wiggle 0.6s ease-in-out infinite;
   }
+  .queue-hint {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.64rem;
+    color: rgba(168, 85, 247, 0.55);
+    padding-left: 4px;
+  }
 `
 
 export const App = () => {
@@ -539,10 +587,14 @@ export const App = () => {
   const [useVaultContext, setUseVaultContext] = useState(true)
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
+  const [vaultIndexing, setVaultIndexing] = useState(false)
   const [pipMode, setPipMode] = useState(false)
   const statusRef = useRef(status)
+  const busyRef = useRef(busy)
   const pendingTokenRef = useRef('')
-  const rafRef = useRef<number | null>(null)
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const vaultIndexRunRef = useRef(0)
   const streamUnsubscribeRef = useRef<(() => void) | null>(null)
   const noteContentCacheRef = useRef<Map<string, string>>(new Map())
 
@@ -551,8 +603,8 @@ export const App = () => {
       setModels(items)
       setSelectedModel((current) => {
         if (current && items.some((model) => model.id === current)) return current
-        const fast = items.find((m) => m.id === 'qwen2.5:3b')
-          ?? items.find((m) => m.id === 'qwen2.5:1.5b')
+        const fast = items.find((m) => m.id === 'qwen2.5:1.5b')
+          ?? items.find((m) => m.id === 'qwen2.5:3b')
           ?? items.find((m) => m.id.startsWith('qwen2.5'))
         return fast?.id ?? items[0]?.id ?? ''
       })
@@ -572,32 +624,98 @@ export const App = () => {
   }, [])
 
   useEffect(() => { statusRef.current = status }, [status])
+  useEffect(() => { busyRef.current = busy }, [busy])
 
   useEffect(() => {
     noteContentCacheRef.current.clear()
   }, [vaultStatus.connected, vaultStatus.vaultPath])
 
   useEffect(() => {
-    if (!vaultStatus.connected) return
-    let cancelled = false
-    const indexVault = async () => {
-      try {
-        const notes = await window.jarvis.obsidianListNotes(200)
-        for (const note of notes) {
-          if (cancelled) break
-          try {
-            const content = await window.jarvis.obsidianReadNote(note.path)
-            if (content.trim()) await window.jarvis.ragIndex(`vault:${note.path}`, content)
-          } catch { /* skip */ }
-        }
-        if (!cancelled) {
-          const stats = await window.jarvis.ragStats()
-          setRagInfo(stats)
-        }
-      } catch { /* best-effort */ }
+    if (!vaultStatus.connected) {
+      setVaultIndexing(false)
+      return
     }
+
+    const runId = vaultIndexRunRef.current + 1
+    vaultIndexRunRef.current = runId
+    let cancelled = false
+
+    const indexVault = async (): Promise<void> => {
+      setVaultIndexing(true)
+      try {
+        const [notes, stats] = await Promise.all([
+          window.jarvis.obsidianListNotes(VAULT_INDEX_NOTE_LIMIT),
+          window.jarvis.ragStats().catch(() => null)
+        ])
+        if (cancelled || runId !== vaultIndexRunRef.current) {
+          return
+        }
+
+        const indexedSources = new Set(stats?.sources ?? [])
+
+        for (const note of notes) {
+          if (cancelled || runId !== vaultIndexRunRef.current) {
+            return
+          }
+
+          while (busyRef.current && !cancelled && runId === vaultIndexRunRef.current) {
+            await delay(250)
+          }
+
+          if (cancelled || runId !== vaultIndexRunRef.current) {
+            return
+          }
+
+          const sourceKey = toVaultSourceKey(note.path, note.updatedAt)
+          if (indexedSources.has(sourceKey)) {
+            continue
+          }
+
+          const sourcePrefix = toVaultSourcePrefix(note.path)
+          for (const existing of [...indexedSources]) {
+            if (!existing.startsWith(sourcePrefix) || existing === sourceKey) {
+              continue
+            }
+            await window.jarvis.ragRemove(existing).catch(() => {})
+            indexedSources.delete(existing)
+          }
+
+          const cached = noteContentCacheRef.current.get(note.path)
+          const content = cached ?? await window.jarvis.obsidianReadNote(note.path)
+          if (cached === undefined) {
+            noteContentCacheRef.current.set(note.path, content)
+          }
+          if (!content.trim()) {
+            continue
+          }
+
+          const chunksAdded = await window.jarvis.ragIndex(sourceKey, content).catch(() => 0)
+          if (chunksAdded > 0) {
+            indexedSources.add(sourceKey)
+          }
+
+          await delay(VAULT_INDEX_IDLE_DELAY_MS)
+        }
+
+        if (!cancelled && runId === vaultIndexRunRef.current) {
+          const nextStats = await window.jarvis.ragStats().catch(() => null)
+          if (nextStats) {
+            setRagInfo(nextStats)
+          }
+        }
+      } catch {
+        // best effort indexing
+      } finally {
+        if (!cancelled && runId === vaultIndexRunRef.current) {
+          setVaultIndexing(false)
+        }
+      }
+    }
+
     void indexVault()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [vaultStatus.connected, vaultStatus.vaultPath])
 
   useEffect(() => {
@@ -632,17 +750,29 @@ export const App = () => {
 
   const buildPromptWithVaultContext = useCallback(async (
     userPrompt: string
-  ): Promise<{ content: string; matchCount: number; fallbackUsed: boolean }> => {
+  ): Promise<{ content: string; matchCount: number; fallbackUsed: boolean; notePaths: string[] }> => {
     if (!useVaultContext || !vaultStatus.connected) {
-      return { content: userPrompt, matchCount: 0, fallbackUsed: false }
+      return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
     }
     try {
       const endingIntent = ENDING_INTENT_PATTERN.test(userPrompt)
       const matches = await window.jarvis.obsidianSearchNotes(userPrompt, 5)
       if (matches.length === 0) {
-        const notes = await window.jarvis.obsidianListNotes(RECENT_NOTE_SCAN_LIMIT)
-        if (notes.length === 0) return { content: userPrompt, matchCount: 0, fallbackUsed: false }
-        const broadNotes = notes.slice(0, BROAD_CONTEXT_NOTE_LIMIT)
+        const notes = await window.jarvis.obsidianListNotes(FALLBACK_NOTE_SCAN_LIMIT)
+        if (notes.length === 0) {
+          return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
+        }
+        const queryTerms = toPromptTerms(userPrompt)
+        const broadNotes = [...notes]
+          .sort((a, b) => {
+            const byQueryScore = scoreFallbackNotePath(b.path, queryTerms) - scoreFallbackNotePath(a.path, queryTerms)
+            if (byQueryScore !== 0) {
+              return byQueryScore
+            }
+            return b.updatedAt - a.updatedAt
+          })
+          .slice(0, BROAD_CONTEXT_NOTE_LIMIT)
+
         const broadExcerpts = await Promise.all(
           broadNotes.map(async (note) => ({
             path: note.path,
@@ -659,11 +789,18 @@ export const App = () => {
           collected += block
           usedNotes += 1
         }
-        if (usedNotes === 0) return { content: userPrompt, matchCount: 0, fallbackUsed: false }
+        if (usedNotes === 0) {
+          return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
+        }
+        const usedPaths = broadExcerpts
+          .filter((entry) => entry.excerpt.trim().length > 0)
+          .slice(0, usedNotes)
+          .map((entry) => entry.path)
         return {
           content: `${userPrompt}\n\n[Obsidian context]\n${collected}`,
           matchCount: usedNotes,
-          fallbackUsed: true
+          fallbackUsed: true,
+          notePaths: usedPaths
         }
       }
       const topMatches = matches.slice(0, MATCH_CONTEXT_NOTE_LIMIT)
@@ -686,10 +823,11 @@ export const App = () => {
       return {
         content: `${userPrompt}\n\n[Obsidian context]\n${snippets}${excerpts ? `\n${excerpts}` : ''}`,
         matchCount: Math.max(topMatches.length, usedNotes),
-        fallbackUsed: false
+        fallbackUsed: false,
+        notePaths: topMatches.map((match) => match.path)
       }
     } catch {
-      return { content: userPrompt, matchCount: 0, fallbackUsed: false }
+      return { content: userPrompt, matchCount: 0, fallbackUsed: false, notePaths: [] }
     }
   }, [readVaultNoteCached, useVaultContext, vaultStatus.connected])
 
@@ -713,17 +851,17 @@ export const App = () => {
   }, [])
 
   const scheduleTokenFlush = useCallback((): void => {
-    if (rafRef.current !== null) return
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null
+    if (flushTimerRef.current !== null) return
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null
       flushPendingTokens()
-    })
+    }, TOKEN_FLUSH_INTERVAL_MS)
   }, [flushPendingTokens])
 
   const flushImmediately = useCallback((): void => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
     }
     flushPendingTokens()
   }, [flushPendingTokens])
@@ -733,12 +871,41 @@ export const App = () => {
       streamUnsubscribeRef.current()
       streamUnsubscribeRef.current = null
     }
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    if (streamWatchdogRef.current !== null) {
+      clearTimeout(streamWatchdogRef.current)
+      streamWatchdogRef.current = null
     }
     pendingTokenRef.current = ''
   }, [])
+
+  const finalizeStream = useCallback((nextStatus = 'ready'): void => {
+    flushImmediately()
+    setStatusSafe(nextStatus)
+    setBusy(false)
+    teardownStream()
+  }, [flushImmediately, setStatusSafe, teardownStream])
+
+  const touchStreamWatchdog = useCallback((): void => {
+    if (streamWatchdogRef.current !== null) {
+      clearTimeout(streamWatchdogRef.current)
+      streamWatchdogRef.current = null
+    }
+
+    streamWatchdogRef.current = setTimeout(() => {
+      setEntries((prev) => [
+        ...prev,
+        {
+          type: 'error',
+          content: 'Stream timed out due to inactivity. Try a faster model or shorter prompt.'
+        }
+      ])
+      finalizeStream('ready')
+    }, STREAM_STALL_TIMEOUT_MS)
+  }, [finalizeStream])
 
   const handleAttachFiles = async (): Promise<void> => {
     const paths = await window.jarvis.openFiles()
@@ -824,6 +991,7 @@ export const App = () => {
     let content = text
     let injectedMatches = 0
     let fallbackContextUsed = false
+    let contextPaths: string[] = []
 
     if (vaultStatus.connected && useVaultContext) {
       setStatusSafe('retrieving context...')
@@ -831,6 +999,7 @@ export const App = () => {
       content = enriched.content
       injectedMatches = enriched.matchCount
       fallbackContextUsed = enriched.fallbackUsed
+      contextPaths = enriched.notePaths
     }
 
     const forceAgentMode = attachedPaths.length > 0
@@ -842,9 +1011,13 @@ export const App = () => {
     setEntries((prev) => {
       const next: ChatEntry[] = [...prev, { type: 'user', content: text }]
       if (injectedMatches > 0) {
+        const topSources = contextPaths.slice(0, 3).join(', ')
+        const sourceSuffix = topSources ? ` (${topSources})` : ''
         next.push({
           type: 'thinking',
-          content: fallbackContextUsed ? 'Loaded broad vault context.' : `Loaded ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}.`
+          content: fallbackContextUsed
+            ? `Context ready from ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
+            : `Context matched ${injectedMatches} note${injectedMatches > 1 ? 's' : ''}${sourceSuffix}.`
         })
       }
       return next
@@ -854,9 +1027,11 @@ export const App = () => {
     const useAgentMode = chatMode === 'agent' || forceAgentMode
 
     if (!useAgentMode) {
+      touchStreamWatchdog()
       streamUnsubscribeRef.current = window.jarvis.chatStream(
-        { model: selectedModel, messages, stream: true, max_tokens: 256 },
+        { model: selectedModel, messages, stream: true, max_tokens: 192 },
         (event) => {
+          touchStreamWatchdog()
           switch (event.type) {
             case 'token':
               setStatusSafe('generating...')
@@ -864,12 +1039,12 @@ export const App = () => {
               scheduleTokenFlush()
               break
             case 'done':
-              flushImmediately(); setStatusSafe('ready'); setBusy(false); teardownStream()
+              finalizeStream('ready')
               break
             case 'error':
               flushImmediately()
               setEntries((prev) => [...prev, { type: 'error', content: event.message ?? 'Stream failed' }])
-              setStatusSafe('ready'); setBusy(false); teardownStream()
+              finalizeStream('ready')
               break
           }
         }
@@ -877,7 +1052,9 @@ export const App = () => {
       return
     }
 
+    touchStreamWatchdog()
     streamUnsubscribeRef.current = window.jarvis.agentChat(selectedModel, messages, (event: AgentEvent) => {
+      touchStreamWatchdog()
       switch (event.type) {
         case 'stream_token':
           setStatusSafe('generating...')
@@ -914,22 +1091,22 @@ export const App = () => {
         case 'text':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
-          setStatusSafe('ready'); setBusy(false); teardownStream()
+          finalizeStream('ready')
           break
         case 'done':
-          flushImmediately(); setStatusSafe('ready'); setBusy(false); teardownStream()
+          finalizeStream('ready')
           break
         case 'error':
           flushImmediately()
           setEntries((prev) => [...prev, { type: 'error', content: event.message }])
-          setStatusSafe('ready'); setBusy(false); teardownStream()
+          finalizeStream('ready')
           break
       }
     })
   }, [
     attachedPaths, buildPromptWithVaultContext, chatMode,
     scheduleTokenFlush, selectedModel, setStatusSafe,
-    teardownStream, useVaultContext, vaultStatus.connected, flushImmediately
+    teardownStream, useVaultContext, vaultStatus.connected, flushImmediately, finalizeStream, touchStreamWatchdog
   ])
 
   const handleSend = (): void => {
@@ -1063,6 +1240,13 @@ export const App = () => {
             </span>
           )}
 
+          {!pipMode && vaultIndexing && (
+            <span className="tb-badge">
+              <span className="tb-badge-dot" style={{ background: '#fbbf24', boxShadow: '0 0 6px rgba(251,191,36,0.4)' }} />
+              Syncing vault
+            </span>
+          )}
+
           {!pipMode && vaultStatus.connected && (
             <span className="tb-badge">
               <span className="tb-badge-dot" style={{ background: '#a855f7', boxShadow: '0 0 6px rgba(168,85,247,0.4)' }} />
@@ -1115,6 +1299,11 @@ export const App = () => {
               onKeyDown={handleKeyDown}
               placeholder={pipMode ? 'Ask Jarvis...' : vaultStatus.connected ? `Message Jarvis... (${connectedVaultName})` : 'Message Jarvis...'}
             />
+            {!pipMode && busy && queuedPrompts.length > 0 && (
+              <div className="queue-hint">
+                Keep typing while Jarvis responds. {queuedPrompts.length} message{queuedPrompts.length > 1 ? 's' : ''} queued.
+              </div>
+            )}
           </div>
           <button
             type="button"

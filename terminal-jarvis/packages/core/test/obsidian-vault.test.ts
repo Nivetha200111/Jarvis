@@ -58,4 +58,19 @@ describe('obsidian-vault-service', () => {
     expect(search.length).toBeGreaterThan(0)
     expect(search[0]?.path).toBe('Tier ZERO.md')
   })
+
+  it('finds ending queries even when one keyword is generic', () => {
+    const vaultPath = mkdtempSync(join(tmpdir(), 'jarvis-core-vault-ending-'))
+    writeFileSync(
+      join(vaultPath, 'Tier ZERO.md'),
+      'The story ends when Arin opens the final gate and chooses exile.',
+      'utf8'
+    )
+
+    const vault = createObsidianVaultService({ initialVaultPath: vaultPath })
+    const search = vault.searchNotes('tell me where the book ends', 5)
+
+    expect(search.length).toBeGreaterThan(0)
+    expect(search[0]?.path).toBe('Tier ZERO.md')
+  })
 })
