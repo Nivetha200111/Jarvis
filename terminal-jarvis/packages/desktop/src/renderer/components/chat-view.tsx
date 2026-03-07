@@ -35,7 +35,10 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
     isStreaming && index === lastIndex && entries[index]?.type === 'assistant'
 
   return (
-    <section className={`cv${isStreaming ? ' cv--streaming' : ''}${compact ? ' cv--compact' : ''}`}>
+    <section
+      className={`cv${isStreaming ? ' cv--streaming' : ''}${compact ? ' cv--compact' : ''}`}
+      data-testid="chat-view"
+    >
       <style>{`
         .cv {
           height: 100%;
@@ -60,16 +63,17 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
         .cv--compact .cv-empty { gap: 14px; padding: 24px 16px; }
         .cv-empty-logo {
           font-family: 'JetBrains Mono', monospace;
-          font-weight: 600;
-          font-size: 2.4rem;
-          color: #a855f7;
+          font-weight: 700;
+          font-size: 2.6rem;
+          color: #c084fc;
           animation: cvFloat 3s ease-in-out infinite;
-          text-shadow: 0 0 30px rgba(168, 85, 247, 0.3);
+          text-shadow: 0 0 30px rgba(168, 85, 247, 0.4), 0 0 60px rgba(168, 85, 247, 0.15);
         }
         .cv--compact .cv-empty-logo { font-size: 1.6rem; }
         .cv-empty-text {
-          color: rgba(228, 228, 231, 0.4);
-          font-size: 0.84rem;
+          color: rgba(228, 228, 231, 0.52);
+          font-size: 0.86rem;
+          font-weight: 500;
           text-align: center;
           line-height: 1.7;
           max-width: 340px;
@@ -79,11 +83,11 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
         .cv-empty-hint {
           font-family: 'JetBrains Mono', monospace;
           font-size: 0.72rem;
-          color: rgba(168, 85, 247, 0.35);
-          padding: 10px 18px;
-          border: 1px solid rgba(168, 85, 247, 0.12);
-          border-radius: 12px;
-          background: rgba(168, 85, 247, 0.04);
+          color: rgba(168, 85, 247, 0.45);
+          padding: 12px 22px;
+          border: 1px solid rgba(168, 85, 247, 0.14);
+          border-radius: 20px;
+          background: rgba(168, 85, 247, 0.05);
           animation: cvBounceIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
           transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s;
         }
@@ -110,56 +114,56 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
         .cv-entry + .cv-entry { margin-top: 2px; }
 
         .cv-entry--user {
-          background: rgba(168, 85, 247, 0.04);
-          border-radius: 16px;
+          background: rgba(168, 85, 247, 0.05);
+          border-radius: 22px;
           margin: 6px 16px;
-          border: 1px solid rgba(168, 85, 247, 0.08);
+          border: 1px solid rgba(168, 85, 247, 0.1);
         }
-        .cv--compact .cv-entry--user { margin: 4px 8px; border-radius: 12px; }
+        .cv--compact .cv-entry--user { margin: 4px 8px; border-radius: 18px; }
         .cv-entry--assistant {
-          padding: 16px 20px;
+          padding: 16px 22px;
           margin: 6px 16px;
-          border-radius: 16px;
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid rgba(255, 255, 255, 0.04);
+          border-radius: 22px;
+          background: rgba(255, 255, 255, 0.025);
+          border: 1px solid rgba(255, 255, 255, 0.05);
         }
-        .cv--compact .cv-entry--assistant { padding: 10px 12px; margin: 4px 8px; border-radius: 12px; }
+        .cv--compact .cv-entry--assistant { padding: 10px 14px; margin: 4px 8px; border-radius: 18px; }
         .cv-entry--thinking {
           background: rgba(139, 92, 246, 0.05);
           border-left: 3px solid rgba(139, 92, 246, 0.2);
           margin: 4px 16px;
-          border-radius: 0 12px 12px 0;
+          border-radius: 0 18px 18px 0;
           padding: 10px 16px;
           animation: cvSlideRight 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .cv--compact .cv-entry--thinking { margin: 3px 8px; padding: 7px 10px; }
+        .cv--compact .cv-entry--thinking { margin: 3px 8px; padding: 7px 10px; border-radius: 0 14px 14px 0; }
         .cv-entry--tool_call {
           background: rgba(52, 211, 153, 0.05);
           border-left: 3px solid rgba(52, 211, 153, 0.25);
           margin: 4px 16px;
-          border-radius: 0 12px 12px 0;
+          border-radius: 0 18px 18px 0;
           padding: 10px 16px;
           animation: cvPopIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .cv--compact .cv-entry--tool_call { margin: 3px 8px; padding: 7px 10px; }
+        .cv--compact .cv-entry--tool_call { margin: 3px 8px; padding: 7px 10px; border-radius: 0 14px 14px 0; }
         .cv-entry--tool_result {
           background: rgba(255, 255, 255, 0.015);
           border-left: 3px solid rgba(255, 255, 255, 0.06);
           margin: 4px 16px;
-          border-radius: 0 12px 12px 0;
+          border-radius: 0 18px 18px 0;
           padding: 10px 16px;
           animation: cvSlideRight 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .cv--compact .cv-entry--tool_result { margin: 3px 8px; padding: 7px 10px; max-height: 100px; }
+        .cv--compact .cv-entry--tool_result { margin: 3px 8px; padding: 7px 10px; max-height: 100px; border-radius: 0 14px 14px 0; }
         .cv-entry--error {
           background: rgba(239, 68, 68, 0.06);
           border-left: 3px solid rgba(239, 68, 68, 0.3);
           margin: 4px 16px;
-          border-radius: 0 12px 12px 0;
+          border-radius: 0 18px 18px 0;
           padding: 10px 16px;
           animation: cvWobble 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .cv--compact .cv-entry--error { margin: 3px 8px; padding: 7px 10px; }
+        .cv--compact .cv-entry--error { margin: 3px 8px; padding: 7px 10px; border-radius: 0 14px 14px 0; }
 
         /* label */
         .cv-label {
@@ -168,17 +172,17 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
           gap: 8px;
           margin-bottom: 6px;
           font-size: 0.7rem;
-          font-weight: 500;
+          font-weight: 700;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
         }
         .cv--compact .cv-label { font-size: 0.62rem; gap: 5px; margin-bottom: 4px; }
-        .cv-label--user { color: rgba(168, 85, 247, 0.6); }
-        .cv-label--assistant { color: rgba(168, 85, 247, 0.5); }
-        .cv-label--thinking { color: rgba(139, 92, 246, 0.45); }
-        .cv-label--tool_call { color: rgba(52, 211, 153, 0.55); }
-        .cv-label--tool_result { color: rgba(255, 255, 255, 0.25); }
-        .cv-label--error { color: rgba(239, 68, 68, 0.65); }
+        .cv-label--user { color: rgba(168, 85, 247, 0.75); text-shadow: 0 0 12px rgba(168, 85, 247, 0.2); }
+        .cv-label--assistant { color: rgba(168, 85, 247, 0.65); text-shadow: 0 0 10px rgba(168, 85, 247, 0.15); }
+        .cv-label--thinking { color: rgba(139, 92, 246, 0.55); }
+        .cv-label--tool_call { color: rgba(52, 211, 153, 0.65); text-shadow: 0 0 10px rgba(52, 211, 153, 0.15); }
+        .cv-label--tool_result { color: rgba(255, 255, 255, 0.3); }
+        .cv-label--error { color: rgba(239, 68, 68, 0.75); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
 
         .cv-dot {
           width: 6px;
@@ -203,13 +207,14 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
           line-height: 1.65;
         }
         .cv-content--user {
-          color: rgba(228, 228, 231, 0.9);
-          font-size: 0.84rem;
+          color: rgba(244, 244, 245, 0.95);
+          font-size: 0.85rem;
+          font-weight: 500;
         }
         .cv--compact .cv-content--user { font-size: 0.76rem; }
         .cv-content--assistant {
-          color: rgba(228, 228, 231, 0.85);
-          font-size: 0.84rem;
+          color: rgba(240, 240, 244, 0.92);
+          font-size: 0.85rem;
         }
         .cv--compact .cv-content--assistant { font-size: 0.76rem; }
         .cv-content--thinking {
@@ -233,8 +238,9 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
         }
         .cv--compact .cv-content--tool_result { font-size: 0.64rem; max-height: 100px; }
         .cv-content--error {
-          color: rgba(239, 68, 68, 0.8);
+          color: rgba(239, 68, 68, 0.88);
           font-size: 0.8rem;
+          font-weight: 500;
         }
         .cv--compact .cv-content--error { font-size: 0.72rem; }
 
@@ -314,6 +320,8 @@ export const ChatView = ({ entries, isStreaming = false, compact = false }: Chat
             key={index}
             className={`cv-entry cv-entry--${entry.type}`}
             style={{ animationDelay: `${Math.min(index * 0.05, 0.2)}s` }}
+            data-testid="chat-entry"
+            data-entry-type={entry.type}
           >
             <div className={`cv-label cv-label--${entry.type}`}>
               <span className={`cv-dot cv-dot--${entry.type}`} />

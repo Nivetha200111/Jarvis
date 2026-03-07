@@ -73,6 +73,12 @@ interface LiveScreenFrame {
   activeWindow: string
 }
 
+interface LocalCalendarDraft {
+  title: string
+  start: string
+  end: string
+}
+
 const formatBytesCompact = (bytes: number): string => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return 'size unknown'
@@ -105,6 +111,26 @@ const delay = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const toDateTimeInputValue = (value: Date): string => {
+  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+const createDefaultCalendarDraft = (): LocalCalendarDraft => {
+  const start = new Date()
+  start.setSeconds(0, 0)
+  start.setMinutes(Math.ceil(start.getMinutes() / 30) * 30)
+  if (start.getMinutes() === 60) {
+    start.setHours(start.getHours() + 1, 0, 0, 0)
+  }
+
+  return {
+    title: '',
+    start: toDateTimeInputValue(start),
+    end: toDateTimeInputValue(new Date(start.getTime() + 60 * 60_000))
+  }
+}
 
 const toPromptTerms = (query: string): string[] => {
   const tokens = query.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []
@@ -324,6 +350,93 @@ const CSS = `
       rgba(5, 5, 8, 0.86);
     backdrop-filter: blur(20px);
   }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background:
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.1), transparent 34%),
+      radial-gradient(circle at top right, rgba(16, 185, 129, 0.12), transparent 28%),
+      rgba(5, 5, 8, 0.78);
+    backdrop-filter: blur(16px);
+  }
+  .modal-panel {
+    width: min(520px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 22px;
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(18, 18, 24, 0.98), rgba(10, 10, 14, 0.98));
+    box-shadow: 0 24px 100px rgba(0, 0, 0, 0.42);
+    animation: slideUp 0.24s ease-out both;
+  }
+  .modal-header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .modal-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: rgba(52, 211, 153, 0.9);
+  }
+  .modal-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    letter-spacing: -0.03em;
+    color: #f5f5f5;
+  }
+  .modal-copy {
+    margin: 0;
+    color: rgba(228, 228, 231, 0.68);
+    line-height: 1.55;
+  }
+  .modal-form {
+    display: grid;
+    gap: 14px;
+  }
+  .modal-field {
+    display: grid;
+    gap: 8px;
+  }
+  .modal-field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: rgba(244, 244, 245, 0.92);
+  }
+  .modal-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.24);
+    color: #f4f4f5;
+    border-radius: 20px;
+    padding: 12px 18px;
+    font-size: 0.95rem;
+    outline: none;
+  }
+  .modal-input:focus {
+    border-color: rgba(52, 211, 153, 0.44);
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12);
+  }
+  .modal-field-hint {
+    color: rgba(228, 228, 231, 0.52);
+    font-size: 0.76rem;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
   .onboarding-panel {
     width: min(1120px, 100%);
     max-height: calc(100vh - 56px);
@@ -383,8 +496,8 @@ const CSS = `
     color: rgba(245, 245, 245, 0.85);
   }
   .onboarding-warning {
-    padding: 12px 14px;
-    border-radius: 14px;
+    padding: 14px 18px;
+    border-radius: 20px;
     border: 1px solid rgba(245, 158, 11, 0.28);
     background: rgba(245, 158, 11, 0.08);
     color: #fcd34d;
@@ -446,8 +559,8 @@ const CSS = `
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(0, 0, 0, 0.22);
     color: #f4f4f5;
-    border-radius: 14px;
-    padding: 12px 14px;
+    border-radius: 20px;
+    padding: 12px 18px;
     font-size: 0.94rem;
     outline: none;
   }
@@ -459,8 +572,8 @@ const CSS = `
   .onboarding-secondary,
   .onboarding-primary {
     border: none;
-    border-radius: 14px;
-    padding: 11px 14px;
+    border-radius: 20px;
+    padding: 11px 18px;
     font-weight: 600;
     cursor: pointer;
     transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease;
@@ -498,11 +611,12 @@ const CSS = `
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 14px;
-    border-radius: 16px;
+    padding: 16px;
+    border-radius: 20px;
     border: 1px solid rgba(255, 255, 255, 0.06);
     background: rgba(255, 255, 255, 0.03);
     cursor: pointer;
+    transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.15s;
   }
   .onboarding-model-card--selected {
     border-color: rgba(96, 165, 250, 0.44);
@@ -563,7 +677,7 @@ const CSS = `
     text-align: center;
     color: rgba(228, 228, 231, 0.54);
     border: 1px dashed rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
+    border-radius: 22px;
   }
   .onboarding-footer {
     display: flex;
@@ -582,9 +696,11 @@ const CSS = `
     justify-content: flex-end;
   }
   @media (max-width: 960px) {
+    .modal-overlay,
     .onboarding-overlay {
       padding: 16px;
     }
+    .modal-panel,
     .onboarding-panel {
       padding: 18px;
     }
@@ -626,18 +742,19 @@ const CSS = `
   }
   .titlebar-mark {
     font-family: 'JetBrains Mono', monospace;
-    font-weight: 600;
-    font-size: 1rem;
-    color: #a855f7;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #c084fc;
     animation: float 3s ease-in-out infinite;
-    text-shadow: 0 0 16px rgba(168, 85, 247, 0.4);
+    text-shadow: 0 0 20px rgba(168, 85, 247, 0.5), 0 0 40px rgba(168, 85, 247, 0.2);
   }
   .titlebar--pip .titlebar-mark { font-size: 0.85rem; }
   .titlebar-name {
-    font-weight: 600;
-    font-size: 0.88rem;
-    color: rgba(228, 228, 231, 0.8);
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: rgba(244, 244, 245, 0.92);
     letter-spacing: -0.02em;
+    text-shadow: 0 0 12px rgba(255, 255, 255, 0.08);
   }
   .titlebar--pip .titlebar-name { font-size: 0.78rem; }
   .titlebar-right {
@@ -650,14 +767,14 @@ const CSS = `
   .status-pill {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.65rem;
-    color: rgba(228, 228, 231, 0.25);
-    padding: 4px 10px;
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    color: rgba(228, 228, 231, 0.35);
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
   }
   .titlebar--pip .status-pill { padding: 3px 8px; font-size: 0.6rem; }
   .status-dot {
@@ -681,8 +798,8 @@ const CSS = `
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.62rem;
     color: #a855f7;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 3px 10px;
+    border-radius: 20px;
     background: rgba(168, 85, 247, 0.1);
     animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
@@ -695,10 +812,10 @@ const CSS = `
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: 50%;
     border: none;
     background: transparent;
-    color: rgba(228, 228, 231, 0.25);
+    color: rgba(228, 228, 231, 0.3);
     cursor: pointer;
     font-size: 0.72rem;
     font-family: 'JetBrains Mono', monospace;
@@ -749,18 +866,18 @@ const CSS = `
   }
   .tb-group {
     display: inline-flex;
-    border-radius: 10px;
+    border-radius: 20px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.07);
   }
   .tb-btn {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.7rem;
-    font-weight: 500;
-    padding: 6px 12px;
+    font-weight: 600;
+    padding: 7px 14px;
     border: none;
     background: transparent;
-    color: rgba(228, 228, 231, 0.3);
+    color: rgba(228, 228, 231, 0.4);
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
     white-space: nowrap;
@@ -778,9 +895,10 @@ const CSS = `
   }
   .tb-btn:disabled { cursor: not-allowed; opacity: 0.3; }
   .tb-btn--active {
-    color: rgba(228, 228, 231, 0.9);
-    background: rgba(255, 255, 255, 0.08);
+    color: rgba(244, 244, 245, 0.95);
+    background: rgba(255, 255, 255, 0.1);
     animation: jelly 0.4s ease;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.12);
   }
   .tb-btn--accent { color: rgba(168, 85, 247, 0.6); }
   .tb-btn--accent:hover {
@@ -827,11 +945,11 @@ const CSS = `
   .tb-select {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
-    padding: 6px 10px;
+    padding: 6px 14px;
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 8px;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.02);
-    color: rgba(228, 228, 231, 0.5);
+    color: rgba(228, 228, 231, 0.6);
     cursor: pointer;
     outline: none;
     appearance: none;
@@ -851,14 +969,14 @@ const CSS = `
   .tb-badge {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.62rem;
-    color: rgba(228, 228, 231, 0.25);
+    color: rgba(228, 228, 231, 0.35);
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 4px 10px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.025);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 5px 12px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
     animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
     transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
@@ -909,13 +1027,13 @@ const CSS = `
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 4px 12px;
-    border-radius: 10px;
-    background: rgba(168, 85, 247, 0.07);
-    border: 1px solid rgba(168, 85, 247, 0.12);
+    padding: 5px 14px;
+    border-radius: 20px;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.14);
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.68rem;
-    color: rgba(168, 85, 247, 0.8);
+    color: rgba(168, 85, 247, 0.85);
     animation: chipBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
     transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
@@ -958,11 +1076,11 @@ const CSS = `
     gap: 4px;
   }
   .input-action-btn {
-    padding: 9px 10px;
+    padding: 9px 11px;
     border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.02);
-    color: rgba(228, 228, 231, 0.25);
+    color: rgba(228, 228, 231, 0.3);
     cursor: pointer;
     font-size: 0.8rem;
     font-family: 'JetBrains Mono', monospace;
@@ -990,18 +1108,18 @@ const CSS = `
   .input-field {
     width: 100%;
     border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 12px;
+    border-radius: 22px;
     background: rgba(255, 255, 255, 0.03);
-    color: rgba(228, 228, 231, 0.9);
-    padding: 11px 16px;
+    color: rgba(228, 228, 231, 0.95);
+    padding: 12px 18px;
     font-family: 'Inter', sans-serif;
-    font-size: 0.85rem;
+    font-size: 0.86rem;
     resize: none;
     outline: none;
     transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     line-height: 1.5;
   }
-  .input-area--pip .input-field { padding: 9px 12px; font-size: 0.8rem; border-radius: 10px; }
+  .input-area--pip .input-field { padding: 9px 14px; font-size: 0.8rem; border-radius: 18px; }
   .input-field::placeholder { color: rgba(228, 228, 231, 0.15); }
   .input-field:focus {
     border-color: rgba(168, 85, 247, 0.3);
@@ -1009,9 +1127,9 @@ const CSS = `
     transform: scale(1.005);
   }
   .send-btn {
-    padding: 11px 20px;
+    padding: 11px 22px;
     border: none;
-    border-radius: 12px;
+    border-radius: 22px;
     font-family: 'Inter', sans-serif;
     font-weight: 600;
     font-size: 0.82rem;
@@ -1019,7 +1137,7 @@ const CSS = `
     transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
     flex-shrink: 0;
   }
-  .input-area--pip .send-btn { padding: 9px 14px; font-size: 0.76rem; border-radius: 10px; }
+  .input-area--pip .send-btn { padding: 9px 16px; font-size: 0.76rem; border-radius: 18px; }
   .send-btn:active {
     transform: scale(0.88) !important;
     transition-duration: 0.08s;
@@ -1071,6 +1189,8 @@ export const App = () => {
   const [useCalendarContext, setUseCalendarContext] = useState(true)
   const [calendarStats, setCalendarStats] = useState<CalendarStats>(EMPTY_CALENDAR_STATS)
   const [calendarSyncing, setCalendarSyncing] = useState(false)
+  const [showCalendarComposer, setShowCalendarComposer] = useState(false)
+  const [calendarDraft, setCalendarDraft] = useState<LocalCalendarDraft>(() => createDefaultCalendarDraft())
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
   const [vaultIndexing, setVaultIndexing] = useState(false)
@@ -1710,17 +1830,24 @@ export const App = () => {
   }
 
   const handleAddLocalCalendarEvent = async (): Promise<void> => {
-    const raw = window.prompt('Add local event: title | start | end(optional)')
-    if (!raw) {
-      return
-    }
+    setCalendarDraft(createDefaultCalendarDraft())
+    setShowCalendarComposer(true)
+  }
 
-    const [title, startRaw, endRaw] = raw
-      .split('|')
-      .map((segment) => segment.trim())
+  const handleCalendarDraftChange = useCallback((
+    field: keyof LocalCalendarDraft,
+    value: string
+  ): void => {
+    setCalendarDraft((current) => ({ ...current, [field]: value }))
+  }, [])
+
+  const handleCalendarComposerSubmit = useCallback(async (): Promise<void> => {
+    const title = calendarDraft.title.trim()
+    const startRaw = calendarDraft.start.trim()
+    const endRaw = calendarDraft.end.trim()
 
     if (!title || !startRaw) {
-      pushErrorEntry('Calendar: use "title | start | end(optional)".')
+      pushErrorEntry('Calendar: title and start time are required.')
       return
     }
 
@@ -1735,6 +1862,10 @@ export const App = () => {
       pushErrorEntry('Calendar: end must be a valid date/time.')
       return
     }
+    if (!Number.isNaN(parsedEndTime) && parsedEndTime < startTime) {
+      pushErrorEntry('Calendar: end must be after the start time.')
+      return
+    }
 
     const payload: CalendarEventInput = {
       title,
@@ -1745,6 +1876,8 @@ export const App = () => {
 
     try {
       const created = await window.jarvis.calendarAddEvent(payload)
+      setShowCalendarComposer(false)
+      setCalendarDraft(createDefaultCalendarDraft())
       void recordAudit('write', 'calendar_add_local', `Added local calendar event "${created.title}".`, {
         id: created.id,
         startTime: created.startTime
@@ -1761,7 +1894,7 @@ export const App = () => {
     } catch (e: unknown) {
       pushErrorEntry(`Calendar: ${e instanceof Error ? e.message : String(e)}`)
     }
-  }
+  }, [calendarDraft, recordAudit, refreshCalendarStats, setStatusSafe])
 
   const handleGoogleCalendarImport = async (): Promise<void> => {
     if (calendarSyncing) {
@@ -2281,12 +2414,14 @@ export const App = () => {
               className={`tb-btn ${chatMode === 'fast' ? 'tb-btn--active' : ''}`}
               onClick={() => setChatMode('fast')}
               disabled={busy}
+              data-testid="mode-fast"
             >Fast</button>
             <button
               type="button"
               className={`tb-btn ${chatMode === 'agent' ? 'tb-btn--active' : ''}`}
               onClick={() => setChatMode('agent')}
               disabled={busy}
+              data-testid="mode-agent"
             >Agent</button>
           </div>
 
@@ -2296,6 +2431,7 @@ export const App = () => {
               className={`tb-btn tb-btn--accent ${vaultStatus.connected ? 'tb-btn--active' : ''}`}
               onClick={vaultStatus.connected ? handleDisconnectVault : handleConnectVault}
               disabled={busy}
+              data-testid="vault-toggle"
             >
               {vaultStatus.connected ? connectedVaultName : 'Vault'}
             </button>
@@ -2307,6 +2443,7 @@ export const App = () => {
               className={`tb-btn tb-btn--accent ${useVaultContext ? 'tb-btn--active' : ''}`}
               onClick={() => setUseVaultContext((p) => !p)}
               disabled={busy}
+              data-testid="vault-context-toggle"
             >
               Context {useVaultContext ? 'On' : 'Off'}
             </button>
@@ -2318,6 +2455,7 @@ export const App = () => {
               className={`tb-btn tb-btn--accent ${useCalendarContext ? 'tb-btn--active' : ''}`}
               onClick={() => setUseCalendarContext((current) => !current)}
               disabled={busy}
+              data-testid="schedule-toggle"
             >
               Schedule {useCalendarContext ? 'On' : 'Off'}
             </button>
@@ -2330,6 +2468,7 @@ export const App = () => {
               onClick={handleAddLocalCalendarEvent}
               disabled={busy || calendarSyncing}
               title="Add a local calendar event"
+              data-testid="calendar-add"
             >
               + Event
             </button>
@@ -2342,13 +2481,14 @@ export const App = () => {
               onClick={handleGoogleCalendarImport}
               disabled={calendarSyncing}
               title="Import Google Calendar into local schedule"
+              data-testid="calendar-google-sync"
             >
               {calendarSyncing ? 'Syncing...' : 'Google Sync'}
             </button>
           )}
 
           {!pipMode && canSaveReply && (
-            <button type="button" className="tb-btn tb-btn--green" onClick={handleSaveLastReply}>
+            <button type="button" className="tb-btn tb-btn--green" onClick={handleSaveLastReply} data-testid="save-reply">
               Save
             </button>
           )}
@@ -2359,6 +2499,7 @@ export const App = () => {
               className="tb-btn"
               onClick={() => { void handleShowAuditTrail() }}
               title="Show recent audit records"
+              data-testid="audit-show"
             >
               Audit
             </button>
@@ -2370,6 +2511,7 @@ export const App = () => {
             onClick={handleScreenCapture}
             disabled={busy}
             title="Capture screen"
+            data-testid="screen-capture"
           >
             {pipMode ? 'S' : 'Screen'}
           </button>
@@ -2379,6 +2521,7 @@ export const App = () => {
             className={`tb-btn tb-btn--live ${liveScreenMode ? 'tb-btn--active' : ''}`}
             onClick={handleToggleLiveScreen}
             title="Continuously capture screen frames and attach to prompts"
+            data-testid="live-screen-toggle"
           >
             {pipMode ? 'L' : liveScreenMode ? 'Live On' : 'Live'}
           </button>
@@ -2453,6 +2596,7 @@ export const App = () => {
               setModelPinned(true)
               setSelectedModel(e.target.value)
             }}
+            data-testid="model-select"
           >
             {models.map((model) => (
               <option key={model.id} value={model.id}>{model.id}</option>
@@ -2493,9 +2637,10 @@ export const App = () => {
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={pipMode ? 'Ask Jarvis...' : vaultStatus.connected ? `Message Jarvis... (${connectedVaultName})` : 'Message Jarvis...'}
+              data-testid="chat-input"
             />
             {!pipMode && busy && queuedPrompts.length > 0 && (
-              <div className="queue-hint">
+              <div className="queue-hint" data-testid="queue-hint">
                 Keep typing while Jarvis responds. {queuedPrompts.length} message{queuedPrompts.length > 1 ? 's' : ''} queued.
               </div>
             )}
@@ -2505,11 +2650,96 @@ export const App = () => {
             className={`send-btn ${!canSend ? 'send-btn--disabled' : busy ? 'send-btn--queuing' : 'send-btn--ready'}`}
             disabled={!canSend}
             onClick={handleSend}
+            data-testid="send-button"
           >
             {busy ? (pipMode ? 'Q' : 'Queue') : (pipMode ? '>' : 'Send')}
           </button>
         </div>
       </main>
+
+      {showCalendarComposer && (
+        <div className="modal-overlay" data-testid="calendar-modal">
+          <div className="modal-panel">
+            <div className="modal-header">
+              <div className="modal-kicker">Schedule</div>
+              <h2>Add local event</h2>
+              <p className="modal-copy">
+                Store a local event in Jarvis so schedule-aware replies can use it immediately.
+              </p>
+            </div>
+
+            <form
+              className="modal-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void handleCalendarComposerSubmit()
+              }}
+            >
+              <div className="modal-field">
+                <label htmlFor="calendar-title">Title</label>
+                <input
+                  id="calendar-title"
+                  className="modal-input"
+                  type="text"
+                  value={calendarDraft.title}
+                  onChange={(event) => handleCalendarDraftChange('title', event.target.value)}
+                  placeholder="Design review"
+                  autoFocus
+                  data-testid="calendar-title-input"
+                />
+              </div>
+
+              <div className="modal-field">
+                <label htmlFor="calendar-start">Start</label>
+                <input
+                  id="calendar-start"
+                  className="modal-input"
+                  type="datetime-local"
+                  value={calendarDraft.start}
+                  onChange={(event) => handleCalendarDraftChange('start', event.target.value)}
+                  data-testid="calendar-start-input"
+                />
+              </div>
+
+              <div className="modal-field">
+                <label htmlFor="calendar-end">End</label>
+                <input
+                  id="calendar-end"
+                  className="modal-input"
+                  type="datetime-local"
+                  value={calendarDraft.end}
+                  onChange={(event) => handleCalendarDraftChange('end', event.target.value)}
+                  data-testid="calendar-end-input"
+                />
+                <div className="modal-field-hint">
+                  Leave it empty to create an open-ended local reminder.
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="onboarding-secondary"
+                  onClick={() => {
+                    setShowCalendarComposer(false)
+                    setCalendarDraft(createDefaultCalendarDraft())
+                  }}
+                  data-testid="calendar-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="onboarding-primary"
+                  data-testid="calendar-submit"
+                >
+                  Add event
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showOnboarding && (
         <div className="onboarding-overlay" data-testid="onboarding-overlay">

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDesktopServices } from '../src/main/create-services.js'
+import type { AgentEvent } from '@jarvis/core'
 import {
   calendarAddEvent,
   calendarListEvents,
@@ -13,6 +14,7 @@ import {
   getObsidianStatus,
   listModels,
   readObsidianNote,
+  runAgent,
   searchObsidianNotes,
   sendChat,
   streamChat,
@@ -169,5 +171,26 @@ describe('desktop IPC handlers', () => {
     )
 
     expect(seen.filter((type) => type === 'done')).toHaveLength(1)
+  })
+
+  it('falls back to standard chat when agent tools are unavailable in the runtime', async () => {
+    const services = createDesktopServices()
+    const events: AgentEvent[] = []
+
+    await runAgent(
+      services,
+      {
+        model: 'llama3',
+        messages: [{ role: 'user', content: 'agent fallback check' }],
+        includeCalendarContext: true
+      },
+      (event) => {
+        events.push(event)
+      }
+    )
+
+    expect(events.some((event) => event.type === 'thinking' && event.content.includes('Falling back to standard chat'))).toBe(true)
+    expect(events.some((event) => event.type === 'stream_token')).toBe(true)
+    expect(events.at(-1)?.type).toBe('done')
   })
 })

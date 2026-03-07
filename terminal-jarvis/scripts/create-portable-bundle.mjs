@@ -155,7 +155,7 @@ fi
   }
 
   const batch = `@echo off
-setlocal
+setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 if "%JARVIS_ENGINE%"=="" set "JARVIS_ENGINE=auto"
 set "ELECTRON_RUN_AS_NODE="
@@ -164,23 +164,23 @@ set "VISION_MODEL="
 
 REM Auto-setup: ensure Ollama has required models
 where ollama >nul 2>&1
-if errorlevel 1 (
+if !errorlevel! neq 0 (
   echo [jarvis] Ollama not found. Jarvis will run with mock fallback until Ollama is installed.
   goto launch
 )
 
 echo [jarvis] Checking Ollama models...
 ollama show ${EMBEDDING_MODEL} >nul 2>&1
-if errorlevel 1 (
+if !errorlevel! neq 0 (
   echo [jarvis] Pulling ${EMBEDDING_MODEL} for local RAG...
   ollama pull ${EMBEDDING_MODEL} >nul 2>&1
-  if errorlevel 1 echo [jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable.
+  if !errorlevel! neq 0 echo [jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable.
 )
 
 for %%M in (${CHAT_MODEL_CANDIDATES.join(' ')}) do (
   if not defined CHAT_MODEL (
     ollama show %%M >nul 2>&1
-    if not errorlevel 1 set "CHAT_MODEL=%%M"
+    if !errorlevel! equ 0 set "CHAT_MODEL=%%M"
   )
 )
 
@@ -189,13 +189,13 @@ if not defined CHAT_MODEL (
     if not defined CHAT_MODEL (
       echo [jarvis] Pulling %%M...
       ollama pull %%M >nul 2>&1
-      if not errorlevel 1 set "CHAT_MODEL=%%M"
+      if !errorlevel! equ 0 set "CHAT_MODEL=%%M"
     )
   )
 )
 
 if defined CHAT_MODEL (
-  echo [jarvis] Chat model ready: %CHAT_MODEL%
+  echo [jarvis] Chat model ready: !CHAT_MODEL!
 ) else (
   echo [jarvis] Warning: no chat model available from auto-setup list.
 )
@@ -203,7 +203,7 @@ if defined CHAT_MODEL (
 for %%M in (${VISION_MODEL_CANDIDATES.join(' ')}) do (
   if not defined VISION_MODEL (
     ollama show %%M >nul 2>&1
-    if not errorlevel 1 set "VISION_MODEL=%%M"
+    if !errorlevel! equ 0 set "VISION_MODEL=%%M"
   )
 )
 
@@ -212,19 +212,20 @@ if not defined VISION_MODEL (
     if not defined VISION_MODEL (
       echo [jarvis] Pulling vision model %%M...
       ollama pull %%M >nul 2>&1
-      if not errorlevel 1 set "VISION_MODEL=%%M"
+      if !errorlevel! equ 0 set "VISION_MODEL=%%M"
     )
   )
 )
 
 if defined VISION_MODEL (
-  echo [jarvis] Vision model ready: %VISION_MODEL%
+  echo [jarvis] Vision model ready: !VISION_MODEL!
 ) else (
   echo [jarvis] Warning: no vision model available from auto-setup list. Live screen mode may be unavailable.
 )
 
 :launch
-"%SCRIPT_DIR%electron\\electron.exe" "%SCRIPT_DIR%app\\main.cjs"
+endlocal
+"%~dp0electron\\electron.exe" "%~dp0app\\main.cjs"
 `
   await writeFile(join(bundlePath, 'run-jarvis.bat'), batch, 'utf8')
 }

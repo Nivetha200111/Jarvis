@@ -82,6 +82,28 @@ export const runAgent = async (
   },
   onEvent: (event: AgentEvent) => void
 ): Promise<void> => {
+  if (!services.engine.streamChatWithTools) {
+    onEvent({
+      type: 'thinking',
+      content: 'Agent tools are unavailable in the current runtime. Falling back to standard chat for this request.'
+    })
+
+    for await (const chunk of services.chatService.streamCompletion({
+      model: payload.model,
+      messages: payload.messages,
+      stream: true,
+      max_tokens: 256
+    })) {
+      onEvent({
+        type: 'stream_token',
+        token: chunk.token
+      })
+    }
+
+    onEvent({ type: 'done' })
+    return
+  }
+
   for await (const agentEvent of services.agentService.run(payload.model, payload.messages, {
     includeCalendarContext: payload.includeCalendarContext
   })) {

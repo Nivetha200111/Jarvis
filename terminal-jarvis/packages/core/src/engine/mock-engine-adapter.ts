@@ -76,7 +76,9 @@ export class MockEngineAdapter implements EngineAdapter {
     this.usage.completionTokens = tokens.length
     this.usage.totalTokens = this.usage.promptTokens + this.usage.completionTokens
 
-    const delay = options.streamDelayMs ?? 2
+    const envDelay = Number.parseInt(process.env.JARVIS_MOCK_STREAM_DELAY_MS ?? '', 10)
+    const defaultDelay = Number.isFinite(envDelay) && envDelay >= 0 ? envDelay : 2
+    const delay = options.streamDelayMs ?? defaultDelay
 
     for (let index = 0; index < tokens.length; index += 1) {
       await new Promise((resolve) => setTimeout(resolve, delay))

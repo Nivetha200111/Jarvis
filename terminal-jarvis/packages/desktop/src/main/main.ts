@@ -175,6 +175,19 @@ interface DesktopE2EConfig {
     warning?: string
   }
   pullScenarios?: Record<string, string[]>
+  dialogSelections?: {
+    folderPaths?: string[]
+    filePaths?: string[]
+  }
+  googleCalendarImport?: GoogleCalendarImportResult
+  screenCapture?: {
+    path?: string
+    width?: number
+    height?: number
+    timestamp?: string
+    activeWindow?: string
+    imageBase64?: string
+  }
 }
 
 const toBase64Url = (value: Buffer): string =>
@@ -1035,6 +1048,16 @@ const importGoogleCalendarIntoLocal = async (): Promise<GoogleCalendarImportResu
 }
 
 const captureScreen = async (): Promise<{ path: string; width: number; height: number; timestamp: string; activeWindow: string }> => {
+  if (DESKTOP_E2E_MODE) {
+    return {
+      path: desktopE2EConfig?.screenCapture?.path ?? join(homedir(), '.jarvis', 'screenshots', 'e2e-screen.png'),
+      width: desktopE2EConfig?.screenCapture?.width ?? 1280,
+      height: desktopE2EConfig?.screenCapture?.height ?? 720,
+      timestamp: desktopE2EConfig?.screenCapture?.timestamp ?? new Date().toISOString(),
+      activeWindow: desktopE2EConfig?.screenCapture?.activeWindow ?? 'Jarvis E2E Window'
+    }
+  }
+
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: 1920, height: 1080 }
@@ -1063,6 +1086,17 @@ const captureScreen = async (): Promise<{ path: string; width: number; height: n
 }
 
 const captureScreenFrame = async (): Promise<{ imageBase64: string; width: number; height: number; timestamp: string; activeWindow: string }> => {
+  if (DESKTOP_E2E_MODE) {
+    return {
+      imageBase64: desktopE2EConfig?.screenCapture?.imageBase64
+        ?? 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5L2s8AAAAASUVORK5CYII=',
+      width: desktopE2EConfig?.screenCapture?.width ?? 1024,
+      height: desktopE2EConfig?.screenCapture?.height ?? 576,
+      timestamp: desktopE2EConfig?.screenCapture?.timestamp ?? new Date().toISOString(),
+      activeWindow: desktopE2EConfig?.screenCapture?.activeWindow ?? 'Jarvis E2E Window'
+    }
+  }
+
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: 1024, height: 576 }
@@ -1087,6 +1121,10 @@ const captureScreenFrame = async (): Promise<{ imageBase64: string; width: numbe
 }
 
 const getActiveWindowInfo = (): string => {
+  if (DESKTOP_E2E_MODE) {
+    return desktopE2EConfig?.screenCapture?.activeWindow ?? 'Jarvis E2E Window'
+  }
+
   try {
     if (process.platform === 'linux') {
       return execSync('xdotool getactivewindow getwindowname 2>/dev/null || echo "unknown"', { encoding: 'utf8', timeout: 3000 }).trim()
@@ -1125,6 +1163,10 @@ const systemCallbacks: SystemToolCallbacks = {
 }
 
 const services = createDesktopServices(systemCallbacks)
+
+if (DESKTOP_E2E_MODE) {
+  services.modelManager.sync(getDesktopE2EInstalledModels())
+}
 
 const createWindow = async (): Promise<BrowserWindow> => {
   const window = new BrowserWindow({
@@ -1279,14 +1321,25 @@ const registerIpc = (): void => {
     calendarAddEvent(services, payload)
   )
   ipcMain.handle('calendar:stats', async () => calendarStats(services))
-  ipcMain.handle('calendar:google-import', async () => importGoogleCalendarIntoLocal())
+  ipcMain.handle('calendar:google-import', async () => {
+    if (DESKTOP_E2E_MODE && desktopE2EConfig?.googleCalendarImport) {
+      return desktopE2EConfig.googleCalendarImport
+    }
+    return importGoogleCalendarIntoLocal()
+  })
 
   ipcMain.handle('dialog:open-files', async () => {
+    if (DESKTOP_E2E_MODE) {
+      return desktopE2EConfig?.dialogSelections?.filePaths ?? []
+    }
     const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], title: 'Select files' })
     return result.canceled ? [] : result.filePaths
   })
 
   ipcMain.handle('dialog:open-folder', async () => {
+    if (DESKTOP_E2E_MODE) {
+      return desktopE2EConfig?.dialogSelections?.folderPaths ?? []
+    }
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'], title: 'Select folder' })
     return result.canceled ? [] : result.filePaths
   })
@@ -1294,9 +1347,9 @@ const registerIpc = (): void => {
   ipcMain.handle('obsidian:connect', async (_event, payload?: { vaultPath?: string }) => {
     let vaultPath = payload?.vaultPath?.trim()
     if (!vaultPath) {
-      const result = await dialog.showOpenDialog({ properties: ['openDirectory'], title: 'Select Obsidian vault' })
-      if (result.canceled || result.filePaths.length === 0) return getObsidianStatus(services)
-      const selectedPath = result.filePaths[0]
+      const selectedPath = DESKTOP_E2E_MODE
+        ? desktopE2EConfig?.dialogSelections?.folderPaths?.[0]
+        : (await dialog.showOpenDialog({ properties: ['openDirectory'], title: 'Select Obsidian vault' })).filePaths[0]
       if (!selectedPath) return getObsidianStatus(services)
       vaultPath = selectedPath
     }
