@@ -288,7 +288,7 @@ run-jarvis.bat</code></pre>
         <p class="pricing-lead">
           Jarvis is at a strong private-beta stage. That is enough for a freemium model, not a hard paywall.
           The local core should stay easy to try; the paid layer should be for early supporters, premium workflows,
-          and faster onboarding.
+          and faster onboarding. For now, the cleanest payment path is a manual paid beta via GPay / UPI.
         </p>
         <div class="pricing-grid">
           <article class="price-card">
@@ -321,17 +321,55 @@ run-jarvis.bat</code></pre>
             </ul>
             <div class="price-actions">
               <a
-                id="stripe-checkout"
+                id="payment-checkout"
                 class="btn btn-primary"
                 href="#pricing"
                 rel="noreferrer"
                 aria-disabled="true"
-              >Join Pro Beta</a>
-              <a id="support-link" class="btn btn-ghost" href="https://github.com/Nivetha200111/Jarvis/issues" target="_blank" rel="noreferrer">Contact / Feedback</a>
+              >Pay via GPay / UPI</a>
+              <button id="copy-upi-id" class="btn btn-ghost" type="button">Copy UPI ID</button>
             </div>
-            <p id="stripe-status" class="price-note">
-              Stripe checkout is ready to wire. Add your Stripe Payment Link in <code>site/site-config.js</code> to enable it.
+            <div class="payment-rail">
+              <div class="payment-rail-row">
+                <span class="payment-rail-label">Payment rail</span>
+                <strong id="payment-rail-label" class="payment-rail-value">Manual paid beta via GPay / UPI</strong>
+              </div>
+              <div class="payment-rail-row">
+                <span class="payment-rail-label">UPI ID</span>
+                <code id="payment-upi-id" class="payment-rail-value">Configure in site/site-config.js</code>
+              </div>
+            </div>
+            <p id="payment-status" class="price-note">
+              Set <code>gpayPaymentLink</code> or <code>upiId</code> in <code>site/site-config.js</code> to turn on the paid beta CTA.
             </p>
+            <form id="beta-access-form" class="access-form">
+              <div class="access-form-head">
+                <h4>Already paid?</h4>
+                <p>Submit your payment reference and Jarvis will open a prefilled access request email.</p>
+              </div>
+              <div class="access-form-grid">
+                <label class="access-field">
+                  <span>Name</span>
+                  <input id="beta-access-name" name="name" type="text" placeholder="Your name" />
+                </label>
+                <label class="access-field">
+                  <span>Email</span>
+                  <input id="beta-access-email" name="email" type="email" placeholder="you@example.com" />
+                </label>
+                <label class="access-field">
+                  <span>Payment reference</span>
+                  <input id="beta-access-reference" name="reference" type="text" placeholder="UPI ref / screenshot note" required />
+                </label>
+                <label class="access-field">
+                  <span>Notes</span>
+                  <textarea id="beta-access-notes" name="notes" rows="3" placeholder="Anything useful: plan, handle, preferred email, platform"></textarea>
+                </label>
+              </div>
+              <div class="price-actions">
+                <button id="beta-access-submit" class="btn btn-ghost" type="submit">I paid, request access</button>
+                <a id="support-link" class="btn btn-ghost" href="https://github.com/Nivetha200111/Jarvis/issues" target="_blank" rel="noreferrer">Contact / Feedback</a>
+              </div>
+            </form>
           </article>
         </div>
       </section>

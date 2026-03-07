@@ -13,8 +13,17 @@ const freePlanPrice = document.getElementById('free-plan-price')
 const proPlanName = document.getElementById('pro-plan-name')
 const proPlanPrice = document.getElementById('pro-plan-price')
 const proPlanDescription = document.getElementById('pro-plan-description')
-const stripeCheckoutButton = document.getElementById('stripe-checkout')
-const stripeStatusLabel = document.getElementById('stripe-status')
+const paymentCheckoutButton = document.getElementById('payment-checkout')
+const paymentStatusLabel = document.getElementById('payment-status')
+const paymentRailLabel = document.getElementById('payment-rail-label')
+const paymentUpiIdLabel = document.getElementById('payment-upi-id')
+const copyUpiIdButton = document.getElementById('copy-upi-id')
+const accessForm = document.getElementById('beta-access-form')
+const accessNameInput = document.getElementById('beta-access-name')
+const accessEmailInput = document.getElementById('beta-access-email')
+const accessReferenceInput = document.getElementById('beta-access-reference')
+const accessNotesInput = document.getElementById('beta-access-notes')
+const accessSubmitButton = document.getElementById('beta-access-submit')
 const supportLink = document.getElementById('support-link')
 
 const detectOs = () => {
@@ -148,6 +157,52 @@ const configureDownloadLinks = async () => {
 
 void configureDownloadLinks()
 
+const isMobileDevice = () => /android|iphone|ipad|ipod/i.test(window.navigator.userAgent)
+
+const buildUpiLink = ({ upiId, payeeName, amountInr, planName }) => {
+  if (!upiId) {
+    return ''
+  }
+
+  const params = new URLSearchParams({
+    pa: upiId,
+    pn: payeeName || 'Jarvis',
+    tn: `${planName} beta seat`,
+    cu: 'INR'
+  })
+
+  if (amountInr) {
+    params.set('am', amountInr)
+  }
+
+  return `upi://pay?${params.toString()}`
+}
+
+const setPaymentButtonDisabled = (disabled) => {
+  if (!paymentCheckoutButton) {
+    return
+  }
+
+  paymentCheckoutButton.setAttribute('aria-disabled', disabled ? 'true' : 'false')
+  paymentCheckoutButton.classList.toggle('btn-disabled', disabled)
+}
+
+const buildAccessRequestMailto = ({ monetization, name, email, reference, notes }) => {
+  const subject = `Jarvis ${monetization.proPlanName} access request`
+  const bodyLines = [
+    `Plan: ${monetization.proPlanName}`,
+    `Payment rail: ${monetization.paymentRailLabel || 'GPay / UPI'}`,
+    `Name: ${name || '-'}`,
+    `Email: ${email || '-'}`,
+    `Payment reference: ${reference || '-'}`,
+    '',
+    'Notes:',
+    notes || '-'
+  ]
+
+  return `mailto:${encodeURIComponent(monetization.betaAccessEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join('\n'))}`
+}
+
 const configureMonetization = () => {
   const monetization = siteConfig?.monetization
   if (!monetization) {
@@ -173,28 +228,112 @@ const configureMonetization = () => {
     supportLink.href = monetization.supportUrl
   }
 
-  if (!stripeCheckoutButton || !stripeStatusLabel) {
+  if (paymentRailLabel && monetization.paymentRailLabel) {
+    paymentRailLabel.textContent = monetization.paymentRailLabel
+  }
+
+  const upiId = monetization.upiId?.trim() ?? ''
+  const gpayPaymentLink = monetization.gpayPaymentLink?.trim() ?? ''
+  const amountInr = monetization.upiAmountInr?.trim() ?? ''
+  const payeeName = monetization.upiPayeeName?.trim() ?? ''
+  const upiLink = buildUpiLink({
+    upiId,
+    payeeName,
+    amountInr,
+    planName: monetization.proPlanName
+  })
+
+  if (paymentUpiIdLabel) {
+    paymentUpiIdLabel.textContent = upiId || 'Configure in site/site-config.js'
+  }
+
+  if (!paymentCheckoutButton || !paymentStatusLabel) {
     return
   }
 
-  const stripePaymentLink = monetization.stripePaymentLink?.trim()
+  paymentCheckoutButton.textContent = monetization.proPlanCta
+  paymentCheckoutButton.removeAttribute('target')
+  paymentCheckoutButton.removeAttribute('rel')
+  paymentCheckoutButton.onclick = null
 
-  if (stripePaymentLink) {
-    stripeCheckoutButton.href = stripePaymentLink
-    stripeCheckoutButton.target = '_blank'
-    stripeCheckoutButton.rel = 'noreferrer'
-    stripeCheckoutButton.textContent = monetization.proPlanCta
-    stripeCheckoutButton.setAttribute('aria-disabled', 'false')
-    stripeCheckoutButton.classList.remove('btn-disabled')
-    stripeStatusLabel.textContent = 'Stripe checkout is live for the Pro Beta tier.'
-    return
+  if (gpayPaymentLink) {
+    paymentCheckoutButton.href = gpayPaymentLink
+    paymentCheckoutButton.target = '_blank'
+    paymentCheckoutButton.rel = 'noreferrer'
+    setPaymentButtonDisabled(false)
+    paymentStatusLabel.textContent = 'Live paid beta link enabled. Pay in GPay / UPI, then submit your access request below.'
+  } else if (upiId && isMobileDevice() && upiLink) {
+    paymentCheckoutButton.href = upiLink
+    setPaymentButtonDisabled(false)
+    paymentStatusLabel.textContent = 'Mobile device detected. The payment button opens your UPI app directly.'
+  } else if (upiId) {
+    paymentCheckoutButton.href = '#pricing'
+    setPaymentButtonDisabled(false)
+    paymentStatusLabel.textContent = 'Desktop detected. Use Copy UPI ID, pay in GPay / any UPI app, then submit your access request below.'
+    paymentCheckoutButton.onclick = (event) => {
+      event.preventDefault()
+      copyUpiIdButton?.click()
+    }
+  } else {
+    paymentCheckoutButton.href = '#pricing'
+    setPaymentButtonDisabled(true)
+    paymentStatusLabel.innerHTML = 'Set <code>gpayPaymentLink</code> or <code>upiId</code> in <code>site/site-config.js</code> to turn on the paid beta CTA.'
   }
 
-  stripeCheckoutButton.href = '#pricing'
-  stripeCheckoutButton.textContent = 'Stripe Link Pending'
-  stripeCheckoutButton.setAttribute('aria-disabled', 'true')
-  stripeCheckoutButton.classList.add('btn-disabled')
-  stripeStatusLabel.innerHTML = 'Stripe checkout is ready to wire. Add your Stripe Payment Link in <code>site/site-config.js</code> to enable it.'
+  if (copyUpiIdButton) {
+    copyUpiIdButton.disabled = !upiId
+    copyUpiIdButton.classList.toggle('btn-disabled', !upiId)
+    copyUpiIdButton.addEventListener('click', async () => {
+      if (!upiId) {
+        paymentStatusLabel.textContent = 'Add a real UPI ID in site/site-config.js before using the paid beta CTA.'
+        return
+      }
+
+      try {
+        await navigator.clipboard.writeText(upiId)
+        paymentStatusLabel.textContent = `UPI ID copied: ${upiId}. Pay the beta seat amount, then submit your access request below.`
+      } catch {
+        paymentStatusLabel.textContent = `Copy failed. Use this UPI ID manually: ${upiId}`
+      }
+    })
+  }
+
+  if (accessForm && accessSubmitButton) {
+    accessSubmitButton.textContent = monetization.betaAccessCta || 'I paid, request access'
+    accessForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+
+      const name = accessNameInput instanceof HTMLInputElement ? accessNameInput.value.trim() : ''
+      const email = accessEmailInput instanceof HTMLInputElement ? accessEmailInput.value.trim() : ''
+      const reference = accessReferenceInput instanceof HTMLInputElement ? accessReferenceInput.value.trim() : ''
+      const notes = accessNotesInput instanceof HTMLTextAreaElement ? accessNotesInput.value.trim() : ''
+
+      if (!reference) {
+        paymentStatusLabel.textContent = 'Add your payment reference before requesting access.'
+        return
+      }
+
+      if (monetization.betaAccessEmail?.trim()) {
+        window.location.href = buildAccessRequestMailto({
+          monetization,
+          name,
+          email,
+          reference,
+          notes
+        })
+        paymentStatusLabel.textContent = 'Opening a prefilled access request email. Send it after attaching your payment proof if needed.'
+        return
+      }
+
+      if (supportLink?.href) {
+        window.open(supportLink.href, '_blank', 'noreferrer')
+        paymentStatusLabel.textContent = 'No access email is configured yet. Opened the support link instead.'
+        return
+      }
+
+      paymentStatusLabel.textContent = 'Set betaAccessEmail in site/site-config.js to enable the access request flow.'
+    })
+  }
 }
 
 configureMonetization()
