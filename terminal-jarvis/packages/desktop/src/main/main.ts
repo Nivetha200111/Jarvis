@@ -1018,13 +1018,92 @@ const fetchGoogleCalendarEvents = async (
   return events
 }
 
-const importGoogleCalendarIntoLocal = async (): Promise<GoogleCalendarImportResult> => {
-  const clientId = process.env.JARVIS_GOOGLE_CLIENT_ID?.trim()
-  if (!clientId) {
-    throw new Error(
-      'Google Calendar sync is not configured. Set JARVIS_GOOGLE_CLIENT_ID and restart Jarvis.'
-    )
+const resolveGoogleClientId = async (): Promise<string> => {
+  const fromEnv = process.env.JARVIS_GOOGLE_CLIENT_ID?.trim()
+  if (fromEnv) return fromEnv
+
+  const fromConfig = services.configManager.get('googleClientId') as string | null
+  if (fromConfig?.trim()) return fromConfig.trim()
+
+  const result = await dialog.showMessageBox(mainWindow!, {
+    type: 'info',
+    title: 'Google Calendar Setup',
+    message: 'Google Calendar sync needs an OAuth Client ID.',
+    detail:
+      'To set this up:\n\n' +
+      '1. Go to console.cloud.google.com\n' +
+      '2. Create a project (or use an existing one)\n' +
+      '3. Enable the "Google Calendar API"\n' +
+      '4. Go to Credentials → Create OAuth Client ID\n' +
+      '   - Application type: Desktop app\n' +
+      '5. Copy the Client ID and paste it below.\n\n' +
+      'This is saved locally and only used for your calendar sync.',
+    buttons: ['Enter Client ID', 'Cancel']
+  })
+
+  if (result.response !== 0) {
+    throw new Error('Google Calendar sync cancelled.')
   }
+
+  const promptWindow = new BrowserWindow({
+    parent: mainWindow!,
+    modal: true,
+    width: 520,
+    height: 210,
+    frame: false,
+    resizable: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  })
+
+  const clientId = await new Promise<string>((resolve) => {
+    const html = `<!DOCTYPE html>
+<html><head><style>
+  body { background: #0a0a0c; color: #f4f4f5; font-family: 'Inter', sans-serif; padding: 24px; margin: 0; }
+  h3 { margin: 0 0 12px; font-size: 1rem; color: #c084fc; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #f4f4f5; font-size: 0.9rem; outline: none; }
+  input:focus { border-color: rgba(168,85,247,0.4); }
+  .hint { color: rgba(228,228,231,0.5); font-size: 0.76rem; margin: 8px 0 14px; }
+  .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  button { padding: 8px 18px; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+  .ok { background: linear-gradient(135deg, #60a5fa, #a855f7); color: white; }
+  .cancel { background: rgba(255,255,255,0.08); color: #f4f4f5; }
+</style></head><body>
+  <h3>Google OAuth Client ID</h3>
+  <input id="cid" placeholder="123456789-abcdef.apps.googleusercontent.com" autofocus />
+  <div class="hint">Paste your Client ID from Google Cloud Console → Credentials</div>
+  <div class="btns">
+    <button class="cancel" onclick="done('')">Cancel</button>
+    <button class="ok" onclick="done(document.getElementById('cid').value)">Save</button>
+  </div>
+  <script>
+    function done(v) { document.title = 'RESULT:' + v; }
+    document.getElementById('cid').addEventListener('keydown', e => { if (e.key === 'Enter') done(document.getElementById('cid').value); if (e.key === 'Escape') done(''); });
+  </script>
+</body></html>`
+
+    promptWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+
+    promptWindow.webContents.on('page-title-updated', (_event, title) => {
+      if (title.startsWith('RESULT:')) {
+        const value = title.slice(7).trim()
+        promptWindow.close()
+        resolve(value)
+      }
+    })
+
+    promptWindow.on('closed', () => resolve(''))
+  })
+
+  if (!clientId) {
+    throw new Error('Google Calendar sync cancelled.')
+  }
+
+  services.configManager.set('googleClientId', clientId)
+  return clientId
+}
+
+const importGoogleCalendarIntoLocal = async (): Promise<GoogleCalendarImportResult> => {
+  const clientId = await resolveGoogleClientId()
 
   const now = Date.now()
   const timeMinIso = new Date(now - GOOGLE_SYNC_LOOKBACK_DAYS * MS_PER_DAY).toISOString()

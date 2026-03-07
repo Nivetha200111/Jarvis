@@ -8,6 +8,7 @@ export interface JarvisConfig {
   defaultModel: string
   apiPort: number
   obsidianVaultPath: string | null
+  googleClientId: string | null
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
 
@@ -27,6 +28,7 @@ const createDefaults = (): JarvisConfig => {
     defaultModel: 'mock-llama-3-8b-q4_k_m',
     apiPort: 8080,
     obsidianVaultPath: null,
+    googleClientId: null,
     logLevel: 'info'
   }
 }
@@ -46,6 +48,10 @@ const validateConfig = (config: JarvisConfig): void => {
 
   if (config.obsidianVaultPath !== null && config.obsidianVaultPath.trim().length === 0) {
     throw new Error('Config validation failed: obsidianVaultPath must be null or a non-empty path')
+  }
+
+  if (config.googleClientId !== null && config.googleClientId.trim().length === 0) {
+    throw new Error('Config validation failed: googleClientId must be null or a non-empty string')
   }
 }
 
