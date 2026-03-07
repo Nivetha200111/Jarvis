@@ -87,21 +87,23 @@ unset ELECTRON_RUN_AS_NODE
 # Auto-setup: ensure Ollama has required models
 if command -v ollama >/dev/null 2>&1; then
   echo "[jarvis] Checking Ollama models..."
+  INSTALLED_MODELS="$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')"
 
-  if ! ollama show ${EMBEDDING_MODEL} >/dev/null 2>&1; then
-    echo "[jarvis] Pulling ${EMBEDDING_MODEL} for local RAG..."
+  if ! echo "$INSTALLED_MODELS" | grep -qi "^${EMBEDDING_MODEL}"; then
+    echo "[jarvis] Pulling ${EMBEDDING_MODEL} for local RAG (~274 MB)..."
     ollama pull ${EMBEDDING_MODEL} || echo "[jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable."
   fi
 
   CHAT_MODEL=""
   for CANDIDATE in ${CHAT_MODEL_CANDIDATES.join(' ')}; do
-    if ollama show "$CANDIDATE" >/dev/null 2>&1; then
+    if echo "$INSTALLED_MODELS" | grep -qi "^$CANDIDATE"; then
       CHAT_MODEL="$CANDIDATE"
       break
     fi
   done
 
   if [ -z "$CHAT_MODEL" ]; then
+    echo "[jarvis] First-time setup: downloading a chat model. This may take a few minutes..."
     for CANDIDATE in ${CHAT_MODEL_CANDIDATES.join(' ')}; do
       echo "[jarvis] Pulling $CANDIDATE..."
       if ollama pull "$CANDIDATE"; then
@@ -120,15 +122,16 @@ if command -v ollama >/dev/null 2>&1; then
 
   VISION_MODEL=""
   for CANDIDATE in ${VISION_MODEL_CANDIDATES.join(' ')}; do
-    if ollama show "$CANDIDATE" >/dev/null 2>&1; then
+    if echo "$INSTALLED_MODELS" | grep -qi "^$CANDIDATE"; then
       VISION_MODEL="$CANDIDATE"
       break
     fi
   done
 
   if [ -z "$VISION_MODEL" ]; then
+    echo "[jarvis] Pulling a vision model for live screen mode..."
     for CANDIDATE in ${VISION_MODEL_CANDIDATES.join(' ')}; do
-      echo "[jarvis] Pulling vision model $CANDIDATE..."
+      echo "[jarvis] Pulling $CANDIDATE..."
       if ollama pull "$CANDIDATE"; then
         VISION_MODEL="$CANDIDATE"
         break
@@ -140,7 +143,7 @@ if command -v ollama >/dev/null 2>&1; then
   if [ -n "$VISION_MODEL" ]; then
     echo "[jarvis] Vision model ready: $VISION_MODEL"
   else
-    echo "[jarvis] Warning: no vision model available from auto-setup list. Live screen mode may be unavailable."
+    echo "[jarvis] Warning: no vision model available. Live screen mode may be unavailable."
   fi
 else
   echo "[jarvis] Ollama not found. Jarvis will run with mock fallback until Ollama is installed."
@@ -169,26 +172,34 @@ if !errorlevel! neq 0 (
   goto launch
 )
 
-echo [jarvis] Checking Ollama models...
-ollama show ${EMBEDDING_MODEL} >nul 2>&1
+REM Snapshot installed models once to avoid repeated slow ollama show calls
+set "INSTALLED_MODELS="
+for /f "skip=1 tokens=1" %%L in ('ollama list 2^>nul') do (
+  set "INSTALLED_MODELS=!INSTALLED_MODELS! %%L"
+)
+
+REM Check embedding model
+echo !INSTALLED_MODELS! | findstr /i /c:"${EMBEDDING_MODEL}" >nul 2>&1
 if !errorlevel! neq 0 (
-  echo [jarvis] Pulling ${EMBEDDING_MODEL} for local RAG...
-  ollama pull ${EMBEDDING_MODEL} >nul 2>&1
+  echo [jarvis] Pulling ${EMBEDDING_MODEL} for local RAG ^(~274 MB^)...
+  ollama pull ${EMBEDDING_MODEL}
   if !errorlevel! neq 0 echo [jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable.
 )
 
+REM Check chat model
 for %%M in (${CHAT_MODEL_CANDIDATES.join(' ')}) do (
   if not defined CHAT_MODEL (
-    ollama show %%M >nul 2>&1
+    echo !INSTALLED_MODELS! | findstr /i /c:"%%M" >nul 2>&1
     if !errorlevel! equ 0 set "CHAT_MODEL=%%M"
   )
 )
 
 if not defined CHAT_MODEL (
+  echo [jarvis] First-time setup: downloading a chat model. This may take a few minutes...
   for %%M in (${CHAT_MODEL_CANDIDATES.join(' ')}) do (
     if not defined CHAT_MODEL (
       echo [jarvis] Pulling %%M...
-      ollama pull %%M >nul 2>&1
+      ollama pull %%M
       if !errorlevel! equ 0 set "CHAT_MODEL=%%M"
     )
   )
@@ -200,18 +211,20 @@ if defined CHAT_MODEL (
   echo [jarvis] Warning: no chat model available from auto-setup list.
 )
 
+REM Check vision model
 for %%M in (${VISION_MODEL_CANDIDATES.join(' ')}) do (
   if not defined VISION_MODEL (
-    ollama show %%M >nul 2>&1
+    echo !INSTALLED_MODELS! | findstr /i /c:"%%M" >nul 2>&1
     if !errorlevel! equ 0 set "VISION_MODEL=%%M"
   )
 )
 
 if not defined VISION_MODEL (
+  echo [jarvis] Pulling a vision model for live screen mode...
   for %%M in (${VISION_MODEL_CANDIDATES.join(' ')}) do (
     if not defined VISION_MODEL (
-      echo [jarvis] Pulling vision model %%M...
-      ollama pull %%M >nul 2>&1
+      echo [jarvis] Pulling %%M...
+      ollama pull %%M
       if !errorlevel! equ 0 set "VISION_MODEL=%%M"
     )
   )
@@ -220,7 +233,7 @@ if not defined VISION_MODEL (
 if defined VISION_MODEL (
   echo [jarvis] Vision model ready: !VISION_MODEL!
 ) else (
-  echo [jarvis] Warning: no vision model available from auto-setup list. Live screen mode may be unavailable.
+  echo [jarvis] Warning: no vision model available. Live screen mode may be unavailable.
 )
 
 :launch
