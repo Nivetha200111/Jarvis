@@ -286,6 +286,23 @@ const initializeImmersiveDemo = () => {
   ]
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const demoTimings = reducedMotion
+    ? {
+        inputCharMs: 0,
+        streamWhitespaceMs: 0,
+        streamWordMs: 0,
+        contextPauseMs: 120,
+        stepPauseMs: 180,
+        replayPauseMs: 1200
+      }
+    : {
+        inputCharMs: 34,
+        streamWhitespaceMs: 24,
+        streamWordMs: 96,
+        contextPauseMs: 1100,
+        stepPauseMs: 1700,
+        replayPauseMs: 3800
+      }
   let runId = 0
   let replayTimer
   let running = false
@@ -368,7 +385,7 @@ const initializeImmersiveDemo = () => {
         return false
       }
       inputText.textContent += char
-      const stillCurrent = await wait(18, token)
+      const stillCurrent = await wait(demoTimings.inputCharMs, token)
       if (!stillCurrent) {
         return false
       }
@@ -392,7 +409,10 @@ const initializeImmersiveDemo = () => {
       }
       node.textContent += chunk
       scrollChatToBottom()
-      const stillCurrent = await wait(chunk.trim().length === 0 ? 14 : 44, token)
+      const stillCurrent = await wait(
+        chunk.trim().length === 0 ? demoTimings.streamWhitespaceMs : demoTimings.streamWordMs,
+        token
+      )
       if (!stillCurrent) {
         return false
       }
@@ -432,7 +452,7 @@ const initializeImmersiveDemo = () => {
 
       setStatus('retrieving context...')
       addMessage('thinking', `~ ${step.context}`)
-      const contextWait = await wait(reducedMotion ? 120 : 520, token)
+      const contextWait = await wait(demoTimings.contextPauseMs, token)
       if (!contextWait) {
         running = false
         return
@@ -446,7 +466,7 @@ const initializeImmersiveDemo = () => {
       }
 
       setStatus('ready')
-      const loopWait = await wait(reducedMotion ? 160 : 900, token)
+      const loopWait = await wait(demoTimings.stepPauseMs, token)
       if (!loopWait) {
         running = false
         return
@@ -461,7 +481,7 @@ const initializeImmersiveDemo = () => {
     setStatus('replaying...')
     replayTimer = scheduleTimeout(() => {
       void run()
-    }, reducedMotion ? 1200 : 2200)
+    }, demoTimings.replayPauseMs)
     running = false
   }
 
