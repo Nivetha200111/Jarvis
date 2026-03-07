@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentEvent,
+  AuditRecord,
+  AuditRecordCategory,
   CalendarEvent,
   CalendarEventInput,
   CalendarStats,
@@ -11,7 +13,8 @@ import type {
   ObsidianSearchHit,
   ObsidianWriteResult,
   RagResult,
-  RagStats
+  RagStats,
+  ToolPermissionSet
 } from '@jarvis/core'
 import type { ChatSendResponse, StreamEvent, AgentStreamEvent } from '../main/ipc-handlers.js'
 
@@ -36,7 +39,52 @@ export interface GoogleCalendarImportResult {
   warning?: string
 }
 
+export interface OllamaStatus {
+  installed: boolean
+  running: boolean
+  provider: 'mock' | 'ollama'
+  warning?: string
+}
+
+export interface OllamaCatalogModel {
+  id: string
+  name: string
+  sizeBytes: number
+  modifiedAt: string | null
+  family: string
+  parameterSize: string
+  quantization: string
+  installed: boolean
+  baseline: boolean
+}
+
+export interface OllamaCatalogResponse {
+  models: OllamaCatalogModel[]
+  installedModelIds: string[]
+  baselineModelIds: string[]
+  source: 'remote' | 'installed' | 'none'
+  warning?: string
+}
+
+export interface OnboardingState {
+  complete: boolean
+  selectedExtraModels: string[]
+  completedAt: string | null
+}
+
+export interface OllamaModelPullEvent {
+  requestId: string
+  modelId: string
+  type: 'progress' | 'done' | 'error'
+  message: string
+}
+
 export interface PreloadApi {
+  onboardingStateGet(): Promise<OnboardingState>
+  onboardingStateSet(payload?: { complete?: boolean; selectedExtraModels?: string[] }): Promise<OnboardingState>
+  ollamaStatus(): Promise<OllamaStatus>
+  ollamaCatalog(): Promise<OllamaCatalogResponse>
+  ollamaPullModel(modelId: string, onEvent: (event: OllamaModelPullEvent) => void): Promise<void>
   chatSend(request: ChatCompletionRequest): Promise<ChatSendResponse>
   chatStream(request: ChatCompletionRequest, onEvent: (event: StreamEvent) => void): () => void
   agentChat(
@@ -49,6 +97,14 @@ export interface PreloadApi {
   openFolder(): Promise<string[]>
   modelList(): Promise<ModelInfo[]>
   healthGet(): Promise<{ status: 'ok'; loadedModel: string | null }>
+  permissionsGet(): Promise<ToolPermissionSet>
+  auditRecent(limit?: number): Promise<AuditRecord[]>
+  auditRecord(payload: {
+    category: AuditRecordCategory
+    action: string
+    summary: string
+    detail?: Record<string, unknown>
+  }): Promise<AuditRecord>
   obsidianConnect(vaultPath?: string): Promise<ObsidianVaultStatus>
   obsidianDisconnect(): Promise<ObsidianVaultStatus>
   obsidianStatus(): Promise<ObsidianVaultStatus>
@@ -79,6 +135,27 @@ export interface PreloadApi {
 }
 
 const api: PreloadApi = {
+  onboardingStateGet: () => ipcRenderer.invoke('onboarding:get-state'),
+  onboardingStateSet: (payload) => ipcRenderer.invoke('onboarding:set-state', payload),
+  ollamaStatus: () => ipcRenderer.invoke('ollama:status'),
+  ollamaCatalog: () => ipcRenderer.invoke('ollama:catalog'),
+  ollamaPullModel: (modelId, onEvent) => new Promise<void>((resolve, reject) => {
+    const requestId = `ollama-pull-${Date.now()}-${Math.floor(Math.random() * 100000)}`
+    const listener = (_event: Electron.IpcRendererEvent, payload: OllamaModelPullEvent): void => {
+      if (payload.requestId !== requestId) return
+      onEvent(payload)
+      if (payload.type === 'done') {
+        ipcRenderer.removeListener('ollama:model-pull', listener)
+        resolve()
+      } else if (payload.type === 'error') {
+        ipcRenderer.removeListener('ollama:model-pull', listener)
+        reject(new Error(payload.message))
+      }
+    }
+
+    ipcRenderer.on('ollama:model-pull', listener)
+    ipcRenderer.send('ollama:model-pull', { requestId, modelId })
+  }),
   chatSend: (request) => ipcRenderer.invoke('chat:send', request),
   chatStream: (request, onEvent) => {
     const requestId = `stream-${Date.now()}-${Math.floor(Math.random() * 100000)}`
@@ -115,6 +192,9 @@ const api: PreloadApi = {
   openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
   modelList: () => ipcRenderer.invoke('model:list'),
   healthGet: () => ipcRenderer.invoke('health:get'),
+  permissionsGet: () => ipcRenderer.invoke('permissions:get'),
+  auditRecent: (limit) => ipcRenderer.invoke('audit:recent', { limit }),
+  auditRecord: (payload) => ipcRenderer.invoke('audit:record', payload),
   obsidianConnect: (vaultPath) => ipcRenderer.invoke('obsidian:connect', { vaultPath }),
   obsidianDisconnect: () => ipcRenderer.invoke('obsidian:disconnect'),
   obsidianStatus: () => ipcRenderer.invoke('obsidian:status'),

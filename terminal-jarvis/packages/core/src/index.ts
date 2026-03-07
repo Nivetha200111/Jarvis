@@ -12,7 +12,10 @@ export type {
   ToolDefinition,
   AgentEvent,
   ChatWithToolsResult,
-  StreamToolEvent
+  StreamToolEvent,
+  ToolPermissionSet,
+  AuditRecord,
+  AuditRecordCategory
 } from './types/index.js'
 
 export { createModelManager } from './services/model-manager.js'
@@ -24,11 +27,17 @@ export type { ConfigManager, JarvisConfig } from './services/config-manager.js'
 export { createTranscriptStore } from './services/transcript-store.js'
 export type { TranscriptStore } from './services/transcript-store.js'
 
+export { createAuditTrail } from './services/audit-trail.js'
+export type { AuditTrail, AuditRecordInput, CreateAuditTrailOptions } from './services/audit-trail.js'
+
 export { createChatService } from './services/chat-service.js'
 export type { ChatService } from './services/chat-service.js'
 
 export { compactChatMessages, derivePromptBudgetChars } from './services/prompt-compactor.js'
 export type { PromptCompactionOptions, PromptCompactionResult } from './services/prompt-compactor.js'
+
+export { pickRecommendedModel, pickRecommendedModelId } from './services/model-router.js'
+export type { ModelUseCase } from './services/model-router.js'
 
 export { createMockEngineAdapter, MockEngineAdapter } from './engine/mock-engine-adapter.js'
 export { createOllamaEngineAdapter, OllamaEngineAdapter } from './engine/ollama-engine-adapter.js'
@@ -40,6 +49,7 @@ export type { AgentService, CreateAgentServiceOptions } from './services/agent-s
 
 export { agentTools, createAgentTools, executeTool } from './tools/index.js'
 export type { ToolExecutionContext, SystemToolCallbacks } from './tools/index.js'
+export { resolveToolPermissions, toToolPermissionSummary } from './tools/index.js'
 
 export { createObsidianVaultService } from './services/obsidian-vault.js'
 export type {

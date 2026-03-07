@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentEvent,
+  AuditRecord,
   CalendarEventInput,
   CalendarStats,
   ModelInfo,
   ObsidianVaultStatus,
-  RagStats
+  RagStats,
+  ToolPermissionSet
 } from '@jarvis/core'
+import type {
+  OllamaCatalogResponse,
+  OllamaModelPullEvent,
+  OllamaStatus,
+  OnboardingState
+} from '../preload/index.js'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
 
 type ChatMode = 'fast' | 'agent'
@@ -31,6 +39,24 @@ const LIVE_SCREEN_REFRESH_MS = 1_800
 const VISION_MODEL_PATTERN = /(llava|vision|moondream|bakllava|qwen2\.5(?:-|:)?vl|llama3\.2-vision)/i
 const CALENDAR_CONTEXT_EVENT_LIMIT = 6
 const CALENDAR_CONTEXT_HORIZON_DAYS = 14
+const SMALL_VAULT_NOTE_LIMIT = 24
+const EMBEDDING_MODEL_PATTERN = /\b(embed|embedding|nomic-embed|mxbai|bge|e5|gte|rerank)\b/iu
+const EMPTY_ONBOARDING_STATE: OnboardingState = {
+  complete: false,
+  selectedExtraModels: [],
+  completedAt: null
+}
+const EMPTY_OLLAMA_STATUS: OllamaStatus = {
+  installed: false,
+  running: false,
+  provider: 'mock'
+}
+const EMPTY_OLLAMA_CATALOG: OllamaCatalogResponse = {
+  models: [],
+  installedModelIds: [],
+  baselineModelIds: [],
+  source: 'none'
+}
 
 const EMPTY_CALENDAR_STATS: CalendarStats = {
   totalEvents: 0,
@@ -45,6 +71,34 @@ interface LiveScreenFrame {
   height: number
   timestamp: string
   activeWindow: string
+}
+
+const formatBytesCompact = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return 'size unknown'
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`
+}
+
+const formatCatalogDate = (value: string | null): string => {
+  if (!value) {
+    return 'date unknown'
+  }
+
+  const parsed = Date.parse(value)
+  if (Number.isNaN(parsed)) {
+    return 'date unknown'
+  }
+
+  return new Date(parsed).toLocaleDateString()
 }
 
 const delay = async (ms: number): Promise<void> =>
@@ -73,6 +127,77 @@ const scoreFallbackNotePath = (notePath: string, queryTerms: string[]): number =
 
   return score
 }
+
+const scoreFallbackNote = (
+  note: { path: string; sizeBytes: number; updatedAt: number },
+  queryTerms: string[],
+  endingIntent: boolean,
+  totalNotes: number
+): number => {
+  const sizeScore = Math.min(18, Math.log10(Math.max(note.sizeBytes, 1)) * 4)
+  const freshnessScore = totalNotes <= SMALL_VAULT_NOTE_LIMIT
+    ? 0
+    : Math.max(0, 10 - Math.floor((Date.now() - note.updatedAt) / 86_400_000))
+  const queryScore = scoreFallbackNotePath(note.path, queryTerms) * 5
+  const endingScore = endingIntent ? Math.min(14, Math.floor(note.sizeBytes / 8_000)) : 0
+
+  return queryScore + sizeScore + freshnessScore + endingScore
+}
+
+const formatPermissionBadge = (permissions: ToolPermissionSet | null): string => {
+  if (!permissions) {
+    return 'Perm unknown'
+  }
+
+  const disabled = Object.entries(permissions).filter(([, enabled]) => !enabled).length
+  return disabled === 0 ? 'Perm full' : `Perm -${disabled}`
+}
+
+const scoreModelForUseCase = (
+  model: ModelInfo,
+  useCase: 'fast' | 'agent' | 'vision'
+): number => {
+  const id = model.id.toLowerCase()
+  const isChat = !EMBEDDING_MODEL_PATTERN.test(id)
+  const isVision = VISION_MODEL_PATTERN.test(id)
+
+  if (useCase === 'vision') {
+    let score = isVision ? 300 : -500
+    if (id.includes('qwen2.5vl') || id.includes('qwen2.5-vl')) score += 80
+    if (id.includes('llava')) score += 60
+    if (model.sizeBytes > 0) score -= Math.floor(model.sizeBytes / (2 * 1024 ** 3))
+    return score
+  }
+
+  let score = isChat ? 100 : -500
+
+  if (useCase === 'fast') {
+    if (id === 'qwen2.5:1.5b') score += 200
+    else if (id === 'qwen2.5:3b') score += 180
+    else if (id.startsWith('qwen2.5')) score += 160
+    else if (id.includes('phi')) score += 120
+  } else {
+    if (id === 'qwen2.5:3b') score += 220
+    else if (id === 'qwen2.5:1.5b') score += 150
+    else if (id.startsWith('qwen2.5')) score += 180
+    else if (id.includes('mistral')) score += 110
+    else if (id.includes('llama3')) score += 100
+  }
+
+  if (isVision) score -= useCase === 'fast' ? 80 : 50
+  if (model.sizeBytes > 0) score -= Math.floor(model.sizeBytes / (useCase === 'fast' ? 1024 ** 3 : 2 * 1024 ** 3))
+
+  return score
+}
+
+const pickRecommendedRendererModelId = (
+  models: ModelInfo[],
+  useCase: 'fast' | 'agent' | 'vision'
+): string | undefined =>
+  [...models]
+    .sort((a, b) => scoreModelForUseCase(b, useCase) - scoreModelForUseCase(a, useCase))
+    .find((model) => scoreModelForUseCase(model, useCase) > -400)
+    ?.id
 
 const toVaultSourceKey = (notePath: string, updatedAt: number): string =>
   `vault:${notePath}@${Math.floor(updatedAt)}`
@@ -183,6 +308,298 @@ const CSS = `
     background: #0a0a0c;
     overflow: hidden;
     animation: appDrop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  .onboarding-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background:
+      radial-gradient(circle at top left, rgba(96, 165, 250, 0.14), transparent 32%),
+      radial-gradient(circle at top right, rgba(168, 85, 247, 0.18), transparent 28%),
+      rgba(5, 5, 8, 0.86);
+    backdrop-filter: blur(20px);
+  }
+  .onboarding-panel {
+    width: min(1120px, 100%);
+    max-height: calc(100vh - 56px);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 24px;
+    border-radius: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(18, 18, 24, 0.96), rgba(10, 10, 14, 0.98));
+    box-shadow: 0 30px 120px rgba(0, 0, 0, 0.45);
+    animation: slideUp 0.3s ease-out both;
+  }
+  .onboarding-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  .onboarding-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: rgba(96, 165, 250, 0.9);
+    margin-bottom: 8px;
+  }
+  .onboarding-header h2 {
+    margin: 0;
+    font-size: 1.8rem;
+    letter-spacing: -0.04em;
+    color: #f5f5f5;
+  }
+  .onboarding-copy {
+    margin: 10px 0 0;
+    max-width: 640px;
+    color: rgba(228, 228, 231, 0.68);
+    line-height: 1.55;
+  }
+  .onboarding-status-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .onboarding-pill,
+  .onboarding-baseline-chip,
+  .onboarding-model-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 11px;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(245, 245, 245, 0.85);
+  }
+  .onboarding-warning {
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    background: rgba(245, 158, 11, 0.08);
+    color: #fcd34d;
+    font-size: 0.92rem;
+  }
+  .onboarding-sections {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 18px;
+  }
+  .onboarding-section {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .onboarding-section--models {
+    overflow: hidden;
+  }
+  .onboarding-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .onboarding-section-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #f4f4f5;
+  }
+  .onboarding-section-head span {
+    color: rgba(228, 228, 231, 0.55);
+    font-size: 0.78rem;
+  }
+  .onboarding-baseline-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-content: flex-start;
+  }
+  .onboarding-baseline-chip {
+    background: rgba(52, 211, 153, 0.12);
+    border-color: rgba(52, 211, 153, 0.22);
+    color: #bbf7d0;
+  }
+  .onboarding-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .onboarding-search {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.22);
+    color: #f4f4f5;
+    border-radius: 14px;
+    padding: 12px 14px;
+    font-size: 0.94rem;
+    outline: none;
+  }
+  .onboarding-search:focus {
+    border-color: rgba(96, 165, 250, 0.4);
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.12);
+  }
+  .onboarding-action,
+  .onboarding-secondary,
+  .onboarding-primary {
+    border: none;
+    border-radius: 14px;
+    padding: 11px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.16s ease, opacity 0.16s ease, background 0.16s ease;
+  }
+  .onboarding-action,
+  .onboarding-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: #f4f4f5;
+  }
+  .onboarding-primary {
+    background: linear-gradient(135deg, #60a5fa, #a855f7);
+    color: white;
+  }
+  .onboarding-action:hover,
+  .onboarding-secondary:hover,
+  .onboarding-primary:hover {
+    transform: translateY(-1px);
+  }
+  .onboarding-action:disabled,
+  .onboarding-secondary:disabled,
+  .onboarding-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+  .onboarding-model-list {
+    min-height: 0;
+    overflow: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    padding-right: 4px;
+  }
+  .onboarding-model-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+  }
+  .onboarding-model-card--selected {
+    border-color: rgba(96, 165, 250, 0.44);
+    background: rgba(96, 165, 250, 0.09);
+  }
+  .onboarding-model-card--installed {
+    border-color: rgba(52, 211, 153, 0.28);
+    background: rgba(52, 211, 153, 0.08);
+  }
+  .onboarding-model-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .onboarding-model-top input {
+    margin-top: 3px;
+  }
+  .onboarding-model-main {
+    min-width: 0;
+    flex: 1;
+  }
+  .onboarding-model-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .onboarding-model-title {
+    min-width: 0;
+    font-weight: 600;
+    color: #f5f5f5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .onboarding-model-badge {
+    padding: 5px 8px;
+    background: rgba(52, 211, 153, 0.12);
+    border-color: rgba(52, 211, 153, 0.24);
+    color: #bbf7d0;
+    white-space: nowrap;
+  }
+  .onboarding-model-meta,
+  .onboarding-model-submeta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    color: rgba(228, 228, 231, 0.58);
+    font-size: 0.78rem;
+  }
+  .onboarding-model-progress {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    color: #93c5fd;
+  }
+  .onboarding-empty {
+    grid-column: 1 / -1;
+    padding: 28px 12px;
+    text-align: center;
+    color: rgba(228, 228, 231, 0.54);
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+  }
+  .onboarding-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+  }
+  .onboarding-footer-copy {
+    color: rgba(228, 228, 231, 0.66);
+    font-size: 0.9rem;
+  }
+  .onboarding-footer-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  @media (max-width: 960px) {
+    .onboarding-overlay {
+      padding: 16px;
+    }
+    .onboarding-panel {
+      padding: 18px;
+    }
+    .onboarding-header,
+    .onboarding-footer {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .onboarding-status-grid,
+    .onboarding-footer-actions {
+      justify-content: flex-start;
+    }
+    .onboarding-sections {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* ---- TITLEBAR ---- */
@@ -641,7 +1058,9 @@ const CSS = `
 export const App = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [modelPinned, setModelPinned] = useState(false)
   const [entries, setEntries] = useState<ChatEntry[]>([])
+  const [conversation, setConversation] = useState<Array<{ role: 'user' | 'assistant'; content: string; images?: string[] }>>([])
   const [prompt, setPrompt] = useState('')
   const [status, setStatus] = useState('ready')
   const [busy, setBusy] = useState(false)
@@ -655,13 +1074,24 @@ export const App = () => {
   const [vaultStatus, setVaultStatus] = useState<ObsidianVaultStatus>(DISCONNECTED_VAULT_STATUS)
   const [ragInfo, setRagInfo] = useState<RagStats | null>(null)
   const [vaultIndexing, setVaultIndexing] = useState(false)
+  const [onboardingState, setOnboardingState] = useState<OnboardingState>(EMPTY_ONBOARDING_STATE)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>(EMPTY_OLLAMA_STATUS)
+  const [ollamaCatalog, setOllamaCatalog] = useState<OllamaCatalogResponse>(EMPTY_OLLAMA_CATALOG)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [selectedExtraModels, setSelectedExtraModels] = useState<string[]>([])
+  const [modelCatalogQuery, setModelCatalogQuery] = useState('')
+  const [installingExtraModels, setInstallingExtraModels] = useState(false)
+  const [pullMessages, setPullMessages] = useState<Record<string, string>>({})
   const [liveScreenMode, setLiveScreenMode] = useState(false)
   const [liveScreenFrame, setLiveScreenFrame] = useState<LiveScreenFrame | null>(null)
   const [liveScreenError, setLiveScreenError] = useState<string | null>(null)
   const [pipMode, setPipMode] = useState(false)
+  const [toolPermissions, setToolPermissions] = useState<ToolPermissionSet | null>(null)
   const statusRef = useRef(status)
   const busyRef = useRef(busy)
   const pendingTokenRef = useRef('')
+  const assistantDraftRef = useRef('')
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const streamWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const vaultIndexRunRef = useRef(0)
@@ -673,11 +1103,26 @@ export const App = () => {
       setModels(items)
       setSelectedModel((current) => {
         if (current && items.some((model) => model.id === current)) return current
-        const fast = items.find((m) => m.id === 'qwen2.5:1.5b')
-          ?? items.find((m) => m.id === 'qwen2.5:3b')
-          ?? items.find((m) => m.id.startsWith('qwen2.5'))
-        return fast?.id ?? items[0]?.id ?? ''
+        return pickRecommendedRendererModelId(items, 'fast') ?? items[0]?.id ?? ''
       })
+    })
+  }, [])
+
+  useEffect(() => {
+    window.jarvis.onboardingStateGet().then((state) => {
+      setOnboardingState(state)
+      setSelectedExtraModels(state.selectedExtraModels)
+      if (!state.complete) {
+        setShowOnboarding(true)
+      }
+    }).catch(() => {})
+
+    window.jarvis.ollamaStatus().then(setOllamaStatus).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    window.jarvis.permissionsGet().then(setToolPermissions).catch(() => {
+      setToolPermissions(null)
     })
   }, [])
 
@@ -847,6 +1292,36 @@ export const App = () => {
     void refreshCalendarStats()
   }, [refreshCalendarStats])
 
+  useEffect(() => {
+    if (!showOnboarding) {
+      return
+    }
+
+    let cancelled = false
+    setCatalogLoading(true)
+
+    Promise.all([
+      window.jarvis.ollamaStatus().catch(() => EMPTY_OLLAMA_STATUS),
+      window.jarvis.ollamaCatalog().catch(() => EMPTY_OLLAMA_CATALOG)
+    ]).then(([status, catalog]) => {
+      if (cancelled) {
+        return
+      }
+      setOllamaStatus(status)
+      setOllamaCatalog(catalog)
+      setCatalogLoading(false)
+    }).catch(() => {
+      if (cancelled) {
+        return
+      }
+      setCatalogLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [showOnboarding])
+
   const readVaultNoteCached = useCallback(async (notePath: string): Promise<string> => {
     const cached = noteContentCacheRef.current.get(notePath)
     if (cached !== undefined) return cached
@@ -880,6 +1355,46 @@ export const App = () => {
     () => models.find((model) => VISION_MODEL_PATTERN.test(model.id))?.id ?? null,
     [models]
   )
+  const baselineCatalogModels = useMemo(
+    () => {
+      const baselineIds = new Set(ollamaCatalog.baselineModelIds)
+      return ollamaCatalog.models.filter((model) => baselineIds.has(model.id))
+    },
+    [ollamaCatalog]
+  )
+  const optionalCatalogModels = useMemo(() => {
+    const normalizedQuery = modelCatalogQuery.trim().toLowerCase()
+    const baselineIds = new Set(ollamaCatalog.baselineModelIds)
+    return ollamaCatalog.models.filter((model) => {
+      if (baselineIds.has(model.id) || model.baseline) {
+        return false
+      }
+      if (!normalizedQuery) {
+        return true
+      }
+
+      const haystack = `${model.id} ${model.family} ${model.parameterSize} ${model.quantization}`.toLowerCase()
+      return haystack.includes(normalizedQuery)
+    })
+  }, [modelCatalogQuery, ollamaCatalog])
+  const pendingOptionalInstallCount = useMemo(
+    () => selectedExtraModels.filter((modelId) => !ollamaCatalog.installedModelIds.includes(modelId)).length,
+    [ollamaCatalog.installedModelIds, selectedExtraModels]
+  )
+  const permissionBadge = useMemo(() => formatPermissionBadge(toolPermissions), [toolPermissions])
+
+  useEffect(() => {
+    if (modelPinned || models.length === 0) {
+      return
+    }
+
+    const targetUseCase = liveScreenMode ? 'vision' : chatMode === 'agent' ? 'agent' : 'fast'
+    const recommended = pickRecommendedRendererModelId(models, targetUseCase)
+
+    if (recommended && recommended !== selectedModel) {
+      setSelectedModel(recommended)
+    }
+  }, [chatMode, liveScreenMode, modelPinned, models, selectedModel])
 
   const buildPromptWithVaultContext = useCallback(async (
     userPrompt: string
@@ -962,13 +1477,14 @@ export const App = () => {
       const queryTerms = toPromptTerms(userPrompt)
       const broadNotes = [...notes]
         .sort((a, b) => {
-          const byQueryScore = scoreFallbackNotePath(b.path, queryTerms) - scoreFallbackNotePath(a.path, queryTerms)
-          if (byQueryScore !== 0) {
-            return byQueryScore
+          const byFallbackScore = scoreFallbackNote(b, queryTerms, endingIntent, notes.length)
+            - scoreFallbackNote(a, queryTerms, endingIntent, notes.length)
+          if (byFallbackScore !== 0) {
+            return byFallbackScore
           }
           return b.updatedAt - a.updatedAt
         })
-        .slice(0, BROAD_CONTEXT_NOTE_LIMIT)
+        .slice(0, notes.length <= SMALL_VAULT_NOTE_LIMIT ? Math.min(12, notes.length) : BROAD_CONTEXT_NOTE_LIMIT)
 
       const broadExcerpts = await Promise.all(
         broadNotes.map(async (note) => ({
@@ -1043,6 +1559,35 @@ export const App = () => {
     setStatus(next)
   }, [])
 
+  const recordAudit = useCallback(async (
+    category: AuditRecord['category'],
+    action: string,
+    summary: string,
+    detail?: Record<string, unknown>
+  ): Promise<void> => {
+    try {
+      await window.jarvis.auditRecord({ category, action, summary, detail })
+    } catch {
+      // Audit must not block the session.
+    }
+  }, [])
+
+  const appendConversationTurn = useCallback((
+    userMessage: { role: 'user'; content: string; images?: string[] },
+    assistantContent: string
+  ): void => {
+    const trimmedAssistant = assistantContent.trim()
+    if (!trimmedAssistant) {
+      return
+    }
+
+    setConversation((prev) => [
+      ...prev,
+      userMessage,
+      { role: 'assistant', content: trimmedAssistant }
+    ])
+  }, [])
+
   const flushPendingTokens = useCallback((): void => {
     if (!pendingTokenRef.current) return
     const buf = pendingTokenRef.current
@@ -1086,6 +1631,7 @@ export const App = () => {
       streamWatchdogRef.current = null
     }
     pendingTokenRef.current = ''
+    assistantDraftRef.current = ''
   }, [])
 
   const finalizeStream = useCallback((nextStatus = 'ready'): void => {
@@ -1153,6 +1699,9 @@ export const App = () => {
     const ts = new Date().toISOString()
     try {
       await window.jarvis.obsidianWriteNote(`Jarvis/${ts.slice(0, 10)}.md`, `## ${ts}\n\n${latestAssistantReply.trim()}\n\n`, 'append')
+      void recordAudit('write', 'obsidian_save_reply', 'Saved the latest assistant reply into the connected vault.', {
+        path: `Jarvis/${ts.slice(0, 10)}.md`
+      })
       setStatusSafe('saved')
       setVaultStatus(await window.jarvis.obsidianStatus())
     } catch (e: unknown) {
@@ -1196,6 +1745,10 @@ export const App = () => {
 
     try {
       const created = await window.jarvis.calendarAddEvent(payload)
+      void recordAudit('write', 'calendar_add_local', `Added local calendar event "${created.title}".`, {
+        id: created.id,
+        startTime: created.startTime
+      })
       await refreshCalendarStats()
       setEntries((prev) => [
         ...prev,
@@ -1219,6 +1772,7 @@ export const App = () => {
     setStatusSafe('syncing calendar...')
     try {
       const result = await window.jarvis.calendarImportGoogle()
+      void recordAudit('system', 'calendar_google_import', `Imported ${result.imported}/${result.total} Google calendar events into local storage.`)
       await refreshCalendarStats()
       const warning = result.warning ? ` ${result.warning}` : ''
       setEntries((prev) => [
@@ -1233,6 +1787,115 @@ export const App = () => {
       pushErrorEntry(`Google Calendar: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setCalendarSyncing(false)
+    }
+  }
+
+  const reloadInstalledModels = async (): Promise<void> => {
+    const items = await window.jarvis.modelList()
+    setModels(items)
+    setSelectedModel((current) => {
+      if (current && items.some((model) => model.id === current)) {
+        return current
+      }
+      const useCase = liveScreenMode ? 'vision' : chatMode === 'agent' ? 'agent' : 'fast'
+      return pickRecommendedRendererModelId(items, useCase) ?? items[0]?.id ?? ''
+    })
+  }
+
+  const reloadOnboardingCatalog = async (): Promise<void> => {
+    setCatalogLoading(true)
+    try {
+      const [status, catalog] = await Promise.all([
+        window.jarvis.ollamaStatus(),
+        window.jarvis.ollamaCatalog()
+      ])
+      setOllamaStatus(status)
+      setOllamaCatalog(catalog)
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  const handleOpenModelHub = async (): Promise<void> => {
+    setShowOnboarding(true)
+    await reloadOnboardingCatalog().catch(() => {})
+  }
+
+  const toggleExtraModelSelection = (modelId: string): void => {
+    setSelectedExtraModels((prev) =>
+      prev.includes(modelId)
+        ? prev.filter((entry) => entry !== modelId)
+        : [...prev, modelId]
+    )
+  }
+
+  const completeOnboarding = async (): Promise<void> => {
+    const nextState = await window.jarvis.onboardingStateSet({
+      complete: true,
+      selectedExtraModels
+    })
+    setOnboardingState(nextState)
+    setShowOnboarding(false)
+  }
+
+  const handleInstallSelectedExtraModels = async (): Promise<void> => {
+    const targets = selectedExtraModels.filter((modelId) => !ollamaCatalog.installedModelIds.includes(modelId))
+    if (targets.length === 0) {
+      await completeOnboarding()
+      setEntries((prev) => [
+        ...prev,
+        {
+          type: 'thinking',
+          content: 'Model setup complete. Baseline and selected extras are ready.'
+        }
+      ])
+      return
+    }
+
+    setInstallingExtraModels(true)
+    setStatusSafe('pulling models...')
+    const failed: string[] = []
+
+    for (const modelId of targets) {
+      setPullMessages((prev) => ({
+        ...prev,
+        [modelId]: `Starting ${modelId}...`
+      }))
+
+      try {
+        await window.jarvis.ollamaPullModel(modelId, (event: OllamaModelPullEvent) => {
+          setPullMessages((prev) => ({
+            ...prev,
+            [event.modelId]: event.message
+          }))
+        })
+      } catch (error: unknown) {
+        failed.push(modelId)
+        setPullMessages((prev) => ({
+          ...prev,
+          [modelId]: error instanceof Error ? error.message : String(error)
+        }))
+      }
+    }
+
+    try {
+      await reloadOnboardingCatalog()
+      await reloadInstalledModels()
+      if (failed.length === 0) {
+        setEntries((prev) => [
+          ...prev,
+          {
+            type: 'thinking',
+            content: `Extra Ollama models ready: ${targets.join(', ')}.`
+          }
+        ])
+        await completeOnboarding()
+      } else {
+        pushErrorEntry(`Model setup: failed to pull ${failed.join(', ')}. You can continue with the included baseline or retry.`)
+      }
+    } finally {
+      setInstallingExtraModels(false)
+      setStatusSafe('ready')
     }
   }
 
@@ -1296,11 +1959,33 @@ export const App = () => {
     ])
   }
 
+  const handleShowAuditTrail = async (): Promise<void> => {
+    try {
+      const records = await window.jarvis.auditRecent(8)
+      if (records.length === 0) {
+        setEntries((prev) => [...prev, { type: 'thinking', content: 'Audit: no recent records yet.' }])
+        return
+      }
+
+      setEntries((prev) => [
+        ...prev,
+        ...records.reverse().map((record) => ({
+          type: 'thinking' as const,
+          content: `Audit ${record.category}: ${record.summary}`
+        }))
+      ])
+      setStatusSafe('audit ready')
+    } catch (error: unknown) {
+      pushErrorEntry(`Audit: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   useEffect(() => () => teardownStream(), [teardownStream])
 
   const sendMessage = useCallback(async (text: string): Promise<void> => {
     if (!text.trim()) return
     teardownStream()
+    assistantDraftRef.current = ''
     setBusy(true)
     setStatusSafe('thinking...')
 
@@ -1314,6 +1999,7 @@ export const App = () => {
     let screenFrameDetails = ''
     const forceAgentMode = attachedPaths.length > 0
     const useAgentMode = chatMode === 'agent' || forceAgentMode
+    const priorConversation = conversation
 
     if (vaultStatus.connected && useVaultContext) {
       setStatusSafe('retrieving context...')
@@ -1376,14 +2062,39 @@ export const App = () => {
       return next
     })
 
-    const userMessage: { role: 'user'; content: string; images?: string[] } = {
+    if (injectedMatches > 0) {
+      const summary = contextMode === 'rag'
+        ? `Attached semantic vault context from ${injectedMatches} chunk${injectedMatches === 1 ? '' : 's'}.`
+        : `Attached vault context from ${injectedMatches} note${injectedMatches === 1 ? '' : 's'}.`
+      void recordAudit('context', 'renderer_vault_context', summary, {
+        mode: contextMode,
+        notePaths: contextPaths
+      })
+    }
+
+    if (calendarMatches > 0) {
+      void recordAudit('context', 'renderer_calendar_context', `Attached schedule context from ${calendarMatches} upcoming event${calendarMatches === 1 ? '' : 's'}.`, {
+        eventCount: calendarMatches
+      })
+    }
+
+    if (screenFrameAttached) {
+      void recordAudit('context', 'renderer_live_screen', `Attached a live screen frame from ${screenFrameDetails}.`)
+    }
+
+    const historyUserMessage: { role: 'user'; content: string } = {
+      role: 'user',
+      content: text
+    }
+    const requestUserMessage: { role: 'user'; content: string; images?: string[] } = {
       role: 'user',
       content
     }
     if (attachedFrame) {
-      userMessage.images = [attachedFrame.imageBase64]
+      requestUserMessage.images = [attachedFrame.imageBase64]
     }
-    const messages = [userMessage]
+    const messages = [...priorConversation, requestUserMessage]
+    let conversationCommitted = false
 
     if (!useAgentMode) {
       touchStreamWatchdog()
@@ -1394,10 +2105,16 @@ export const App = () => {
           switch (event.type) {
             case 'token':
               setStatusSafe('generating...')
+              assistantDraftRef.current += event.token ?? ''
               pendingTokenRef.current += event.token ?? ''
               scheduleTokenFlush()
               break
             case 'done':
+              flushImmediately()
+              if (!conversationCommitted) {
+                appendConversationTurn(historyUserMessage, assistantDraftRef.current)
+                conversationCommitted = true
+              }
               finalizeStream('ready')
               break
             case 'error':
@@ -1418,8 +2135,12 @@ export const App = () => {
       (event: AgentEvent) => {
         touchStreamWatchdog()
         switch (event.type) {
+          case 'audit':
+            setEntries((prev) => [...prev, { type: 'thinking', content: `${event.title}: ${event.content}` }])
+            break
           case 'stream_token':
             setStatusSafe('generating...')
+            assistantDraftRef.current += event.token
             pendingTokenRef.current += event.token
             scheduleTokenFlush()
             break
@@ -1430,6 +2151,7 @@ export const App = () => {
             break
           case 'tool_call':
             flushImmediately()
+            assistantDraftRef.current = ''
             setStatusSafe(`${event.name}...`)
             setEntries((prev) => {
               const last = prev[prev.length - 1]
@@ -1452,10 +2174,20 @@ export const App = () => {
             break
           case 'text':
             flushImmediately()
+            assistantDraftRef.current = event.content
             setEntries((prev) => [...prev, { type: 'assistant', content: event.content }])
+            if (!conversationCommitted) {
+              appendConversationTurn(historyUserMessage, event.content)
+              conversationCommitted = true
+            }
             finalizeStream('ready')
             break
           case 'done':
+            flushImmediately()
+            if (!conversationCommitted) {
+              appendConversationTurn(historyUserMessage, assistantDraftRef.current)
+              conversationCommitted = true
+            }
             finalizeStream('ready')
             break
           case 'error':
@@ -1468,10 +2200,10 @@ export const App = () => {
       { includeCalendarContext: useCalendarContext }
     )
   }, [
-    attachedPaths, buildPromptWithVaultContext, buildPromptWithCalendarContext, chatMode,
+    appendConversationTurn, attachedPaths, buildPromptWithVaultContext, buildPromptWithCalendarContext, chatMode, conversation,
     scheduleTokenFlush, selectedModel, setStatusSafe,
     teardownStream, useVaultContext, vaultStatus.connected, flushImmediately, finalizeStream, touchStreamWatchdog,
-    liveScreenMode, liveScreenFrame, selectedModelSupportsVision, useCalendarContext
+    liveScreenMode, liveScreenFrame, recordAudit, selectedModelSupportsVision, useCalendarContext
   ])
 
   const handleSend = (): void => {
@@ -1621,6 +2353,17 @@ export const App = () => {
             </button>
           )}
 
+          {!pipMode && (
+            <button
+              type="button"
+              className="tb-btn"
+              onClick={() => { void handleShowAuditTrail() }}
+              title="Show recent audit records"
+            >
+              Audit
+            </button>
+          )}
+
           <button
             type="button"
             className="tb-btn tb-btn--screen"
@@ -1656,6 +2399,13 @@ export const App = () => {
             </span>
           )}
 
+          {!pipMode && toolPermissions && (
+            <span className="tb-badge" title={Object.entries(toolPermissions).map(([key, enabled]) => `${key}:${enabled ? 'on' : 'off'}`).join(' | ')}>
+              <span className="tb-badge-dot" style={{ background: '#f59e0b', boxShadow: '0 0 6px rgba(245,158,11,0.4)' }} />
+              {permissionBadge}
+            </span>
+          )}
+
           {!pipMode && liveScreenMode && liveScreenFrame && (
             <span className="tb-badge">
               <span className="tb-badge-dot" style={{ background: '#ef4444', boxShadow: '0 0 6px rgba(239,68,68,0.4)' }} />
@@ -1668,6 +2418,17 @@ export const App = () => {
               <span className="tb-badge-dot" style={{ background: '#f59e0b', boxShadow: '0 0 6px rgba(245,158,11,0.4)' }} />
               Live degraded
             </span>
+          )}
+
+          {!pipMode && (
+            <button
+              type="button"
+              className={`tb-btn ${showOnboarding ? 'tb-btn--active' : ''}`}
+              onClick={() => { void handleOpenModelHub() }}
+              title="Open model setup"
+            >
+              Models
+            </button>
           )}
 
           {!pipMode && vaultIndexing && (
@@ -1687,7 +2448,10 @@ export const App = () => {
           <select
             className="tb-select"
             value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
+            onChange={(e) => {
+              setModelPinned(true)
+              setSelectedModel(e.target.value)
+            }}
           >
             {models.map((model) => (
               <option key={model.id} value={model.id}>{model.id}</option>
@@ -1745,6 +2509,166 @@ export const App = () => {
           </button>
         </div>
       </main>
+
+      {showOnboarding && (
+        <div className="onboarding-overlay">
+          <div className="onboarding-panel">
+            <div className="onboarding-header">
+              <div>
+                <div className="onboarding-kicker">First run</div>
+                <h2>Choose extra Ollama models</h2>
+                <p className="onboarding-copy">
+                  Jarvis already includes the baseline local stack. Use this page to pull any extra Ollama models before you start.
+                </p>
+              </div>
+              <div className="onboarding-status-grid">
+                <span className="onboarding-pill">{ollamaStatus.installed ? 'Ollama installed' : 'Install Ollama first'}</span>
+                <span className="onboarding-pill">{ollamaStatus.provider === 'ollama' ? 'Jarvis on Ollama' : 'Jarvis fallback runtime'}</span>
+                <span className="onboarding-pill">Catalog: {ollamaCatalog.source}</span>
+              </div>
+            </div>
+
+            {(ollamaStatus.warning || ollamaCatalog.warning) && (
+              <div className="onboarding-warning">
+                {ollamaStatus.warning ?? ollamaCatalog.warning}
+              </div>
+            )}
+
+            <div className="onboarding-sections">
+              <section className="onboarding-section">
+                <div className="onboarding-section-head">
+                  <h3>Included baseline</h3>
+                  <span>{baselineCatalogModels.length > 0 ? baselineCatalogModels.length : ollamaCatalog.baselineModelIds.length} models</span>
+                </div>
+                <div className="onboarding-baseline-list">
+                  {(baselineCatalogModels.length > 0
+                    ? baselineCatalogModels.map((model) => model.id)
+                    : ollamaCatalog.baselineModelIds
+                  ).map((modelId) => (
+                    <span key={modelId} className="onboarding-baseline-chip">
+                      {modelId}
+                    </span>
+                  ))}
+                </div>
+              </section>
+
+              <section className="onboarding-section onboarding-section--models">
+                <div className="onboarding-section-head">
+                  <h3>Optional Ollama catalog</h3>
+                  <span>{optionalCatalogModels.length} shown</span>
+                </div>
+
+                <div className="onboarding-toolbar">
+                  <input
+                    className="onboarding-search"
+                    type="search"
+                    value={modelCatalogQuery}
+                    onChange={(event) => setModelCatalogQuery(event.target.value)}
+                    placeholder="Search models, families, sizes..."
+                  />
+                  <button
+                    type="button"
+                    className="onboarding-action"
+                    onClick={() => { void reloadOnboardingCatalog() }}
+                    disabled={catalogLoading || installingExtraModels}
+                  >
+                    {catalogLoading ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+
+                <div className="onboarding-model-list">
+                  {optionalCatalogModels.map((model) => {
+                    const checked = selectedExtraModels.includes(model.id)
+                    const installing = installingExtraModels && checked && !model.installed
+
+                    return (
+                      <label
+                        key={model.id}
+                        className={`onboarding-model-card${checked ? ' onboarding-model-card--selected' : ''}${model.installed ? ' onboarding-model-card--installed' : ''}`}
+                      >
+                        <div className="onboarding-model-top">
+                          <input
+                            type="checkbox"
+                            checked={checked || model.installed}
+                            onChange={() => toggleExtraModelSelection(model.id)}
+                            disabled={installingExtraModels || model.installed}
+                          />
+                          <div className="onboarding-model-main">
+                            <div className="onboarding-model-title-row">
+                              <span className="onboarding-model-title">{model.id}</span>
+                              {model.installed && <span className="onboarding-model-badge">Installed</span>}
+                            </div>
+                            <div className="onboarding-model-meta">
+                              <span>{model.family}</span>
+                              <span>{formatBytesCompact(model.sizeBytes)}</span>
+                              <span>{formatCatalogDate(model.modifiedAt)}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="onboarding-model-submeta">
+                          {model.parameterSize || 'parameter size unknown'} · {model.quantization || 'quant unknown'}
+                        </div>
+                        {pullMessages[model.id] && (
+                          <div className="onboarding-model-progress">
+                            {pullMessages[model.id]}
+                          </div>
+                        )}
+                        {installing && (
+                          <div className="onboarding-model-progress">
+                            Pulling...
+                          </div>
+                        )}
+                      </label>
+                    )
+                  })}
+
+                  {!catalogLoading && optionalCatalogModels.length === 0 && (
+                    <div className="onboarding-empty">
+                      {modelCatalogQuery.trim()
+                        ? 'No models match this search.'
+                        : 'No optional models available from the current catalog response.'}
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <div className="onboarding-footer">
+              <div className="onboarding-footer-copy">
+                {pendingOptionalInstallCount > 0
+                  ? `${pendingOptionalInstallCount} selected model${pendingOptionalInstallCount > 1 ? 's' : ''} will be pulled before you continue.`
+                  : 'You can continue immediately with the included baseline models.'}
+              </div>
+              <div className="onboarding-footer-actions">
+                <button
+                  type="button"
+                  className="onboarding-secondary"
+                  onClick={() => { void completeOnboarding() }}
+                  disabled={installingExtraModels}
+                >
+                  {onboardingState.complete ? 'Close' : 'Continue with baseline'}
+                </button>
+                <button
+                  type="button"
+                  className="onboarding-primary"
+                  onClick={() => { void handleInstallSelectedExtraModels() }}
+                  disabled={
+                    installingExtraModels
+                    || (!ollamaStatus.installed && pendingOptionalInstallCount > 0)
+                    || (!ollamaStatus.running && pendingOptionalInstallCount > 0)
+                  }
+                >
+                  {installingExtraModels
+                    ? 'Pulling models...'
+                    : pendingOptionalInstallCount > 0
+                      ? `Install ${pendingOptionalInstallCount} + continue`
+                      : 'Continue'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

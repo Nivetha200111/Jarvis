@@ -1,11 +1,13 @@
 import type { EngineAdapter, ChatMessage, AgentEvent, ToolCall } from '../types/index.js'
+import type { ToolPermissionSet } from '../types/index.js'
 import type { ModelManager } from './model-manager.js'
 import type { ObsidianVaultService } from './obsidian-vault.js'
 import type { RagService } from './rag-service.js'
 import type { CalendarService } from './calendar-service.js'
+import type { AuditTrail } from './audit-trail.js'
 import { compactChatMessages, derivePromptBudgetChars } from './prompt-compactor.js'
 import type { SystemToolCallbacks } from '../tools/index.js'
-import { createAgentTools, executeTool } from '../tools/index.js'
+import { createAgentTools, executeTool, resolveToolPermissions, toToolPermissionSummary } from '../tools/index.js'
 
 const SYSTEM_PROMPT = `You are Jarvis, a powerful agentic AI assistant running fully locally on the user's machine. You have tools to execute shell commands, read/write files, list directories, extract archives, capture screenshots, read clipboard, send notifications, open URLs, and get system information. If Obsidian tools are available, use them for vault tasks. If RAG tools are available, use rag_search to find relevant knowledge. Use tools proactively to help the user. Think step by step, use tools when needed, and give concise answers.`
 
@@ -47,6 +49,8 @@ export interface CreateAgentServiceOptions {
   ragService?: RagService
   calendarService?: CalendarService
   system?: SystemToolCallbacks
+  auditTrail?: AuditTrail
+  toolPermissions?: Partial<ToolPermissionSet>
 }
 
 export const createAgentService = (
@@ -78,6 +82,16 @@ export const createAgentService = (
     }
 
     const lastUserMsg = [...userMessages].reverse().find((message) => message.role === 'user')
+    const toolPermissions = resolveToolPermissions(options.toolPermissions)
+    const permissionSummary = toToolPermissionSummary(toolPermissions)
+
+    yield { type: 'audit', title: 'Permissions', content: permissionSummary }
+    options.auditTrail?.record({
+      category: 'permission',
+      action: 'agent_permissions',
+      summary: permissionSummary,
+      detail: { ...toolPermissions }
+    })
 
     // Retrieve direct vault context when available. This improves first-response
     // quality even before background RAG indexing has completed.
@@ -109,6 +123,15 @@ export const createAgentService = (
 
           if (blocks.length > 0) {
             vaultContext = `\n\nRelevant vault context:\n---\n${blocks.join('\n---\n')}\n---\nUse this context when answering vault-related questions.`
+            const paths = hits.map((hit) => hit.path)
+            const summary = `Vault context attached from ${paths.length} note${paths.length === 1 ? '' : 's'}: ${paths.join(', ')}.`
+            yield { type: 'audit', title: 'Vault Context', content: summary }
+            options.auditTrail?.record({
+              category: 'context',
+              action: 'vault_context',
+              summary,
+              detail: { paths }
+            })
           }
         }
       } catch {
@@ -126,6 +149,15 @@ export const createAgentService = (
             `[source: ${trimRagSourceLabel(result.source)} | relevance: ${result.score.toFixed(2)}]\n${result.text}`
           )
           ragContext = `\n\nRelevant knowledge from indexed documents:\n---\n${contextChunks.join('\n---\n')}\n---\nUse this context to inform your response when relevant.`
+          const sources = [...new Set(results.map((result) => trimRagSourceLabel(result.source)))]
+          const summary = `Semantic retrieval attached ${results.length} chunk${results.length === 1 ? '' : 's'} from ${sources.join(', ')}.`
+          yield { type: 'audit', title: 'Semantic Context', content: summary }
+          options.auditTrail?.record({
+            category: 'context',
+            action: 'rag_context',
+            summary,
+            detail: { sources, count: results.length }
+          })
         }
       } catch {
         // RAG unavailable — continue without context
@@ -135,7 +167,18 @@ export const createAgentService = (
     let calendarContext = ''
     if (options.calendarService && runOptions.includeCalendarContext !== false) {
       try {
+        const upcomingEvents = options.calendarService.upcomingEvents(6, 14)
         calendarContext = `\n\n${options.calendarService.getContextSummary(Date.now(), 14, 6)}`
+        if (upcomingEvents.length > 0) {
+          const summary = `Schedule context attached from ${upcomingEvents.length} upcoming event${upcomingEvents.length === 1 ? '' : 's'}.`
+          yield { type: 'audit', title: 'Schedule Context', content: summary }
+          options.auditTrail?.record({
+            category: 'context',
+            action: 'calendar_context',
+            summary,
+            detail: { count: upcomingEvents.length }
+          })
+        }
       } catch {
         // Calendar context unavailable — continue without schedule info.
       }
@@ -160,7 +203,8 @@ export const createAgentService = (
             obsidianVault: options.obsidianVault,
             ragService: options.ragService,
             calendarService: options.calendarService,
-            system: options.system
+            system: options.system,
+            permissions: toolPermissions
           })
           : []
         const compactedRound = compactChatMessages(messages, {
@@ -235,7 +279,19 @@ export const createAgentService = (
           obsidianVault: options.obsidianVault,
           ragService: options.ragService,
           calendarService: options.calendarService,
-          system: options.system
+          system: options.system,
+          permissions: toolPermissions
+        })
+
+        options.auditTrail?.record({
+          category: /write|clipboard|calendar_add_event|obsidian_write_note/u.test(name) ? 'write' : 'tool',
+          action: name,
+          summary: `${name} ${result.success ? 'succeeded' : 'failed'}.`,
+          detail: {
+            success: result.success,
+            arguments: args,
+            outputPreview: result.output.slice(0, 400)
+          }
         })
 
         yield { type: 'tool_result', name, output: result.output, success: result.success }

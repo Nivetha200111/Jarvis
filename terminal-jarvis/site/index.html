@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Terminal Jarvis is a fully local AI assistant with terminal, API, and desktop interfaces, including built-in Obsidian + local calendar context with one-click Google sync."
+      content="Terminal Jarvis is a private local assistant for knowledge workers with real actions, built-in vault and schedule context, automatic local model routing, and auditable on-device workflows."
     />
     <title>Terminal Jarvis | Fully Local AI Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,6 +31,7 @@
       <nav class="topnav">
         <a href="#setup">Setup</a>
         <a href="#download">Download</a>
+        <a href="#pricing">Pricing</a>
         <a class="repo-link" href="https://github.com/Nivetha200111/Jarvis" target="_blank" rel="noreferrer">src &rarr;</a>
       </nav>
     </header>
@@ -43,10 +44,10 @@
         </div>
         <h1>Your machine.<br/>Your model.<br/>Your data.</h1>
         <p class="lead">
-          Terminal Jarvis is a fully local, agentic AI assistant. It runs models through Ollama,
-          executes shell and system tools, includes built-in Obsidian vault integration with local RAG retrieval,
-          and now includes local calendar context with one-click Google schedule import in Desktop.
-          It works across terminal, desktop, and API with streaming + queued prompts.
+          Terminal Jarvis is a private local assistant for knowledge workers. It runs models through Ollama,
+          pulls context from your Obsidian vault, local retrieval index, and schedule, executes real actions on your machine,
+          routes automatically to faster local models, and keeps an audit trail of context and tool activity.
+          It works across terminal, desktop, and API with streaming, queued prompts, and real multi-turn memory.
           No cloud. No telemetry. Just your hardware.
         </p>
         <div class="hero-actions">
@@ -136,7 +137,7 @@ curl -fsSL https://ollama.com/install.sh | sh
           <div class="step">
             <div class="step-num">02</div>
             <h3>Model setup (automatic)</h3>
-            <p>No manual model pull needed. The installer/launcher provisions chat + retrieval models on first run.</p>
+            <p>No manual baseline setup needed. The installer/launcher provisions chat, vision, and retrieval models on first run, then the desktop welcome page lets you choose any extra Ollama models from the live catalog.</p>
             <div class="code-block">
               <div class="code-header">
                 <span class="code-dot"></span>
@@ -148,11 +149,15 @@ curl -fsSL https://ollama.com/install.sh | sh
 qwen2.5:3b    <span class="c-dim"># preferred fast agent model</span>
 qwen2.5:1.5b  <span class="c-dim"># fallback</span>
 qwen2.5       <span class="c-dim"># fallback</span>
+qwen2.5vl:3b  <span class="c-dim"># preferred live screen vision model</span>
+qwen2.5-vl:3b <span class="c-dim"># fallback tag variant</span>
+llava:7b      <span class="c-dim"># vision fallback</span>
 nomic-embed-text <span class="c-dim"># local RAG embeddings</span></code></pre>
             </div>
             <div class="model-tags">
               <span class="model-tag tag-agentic">qwen2.5:3b &mdash; auto default</span>
               <span class="model-tag">qwen2.5:1.5b &mdash; fastest</span>
+              <span class="model-tag">qwen2.5vl:3b &mdash; live screen</span>
               <span class="model-tag">qwen2.5 &mdash; fallback</span>
               <span class="model-tag">nomic-embed-text &mdash; RAG</span>
             </div>
@@ -178,8 +183,10 @@ cd terminal-jarvis-linux-x64
 run-jarvis.bat</code></pre>
             </div>
             <p class="step-note">First run: click <code>connect vault</code> to link Obsidian, then click <code>Google Sync</code> once to import your schedule into local calendar context.</p>
+            <p class="step-note">The first-run welcome screen also shows the live Ollama model catalog, excludes the included baseline set, and lets you pull extra models before entering chat.</p>
             <p class="step-note">Use <code>Schedule On</code> to include upcoming events in assistant context. Use <code>+ Event</code> for local-only events and <code>save reply</code> to append answers into <code>Jarvis/YYYY-MM-DD.md</code>.</p>
             <p class="step-note">For Google import, set <code>JARVIS_GOOGLE_CLIENT_ID</code> once, restart the app, then click <code>Google Sync</code>.</p>
+            <p class="step-note">Jarvis now auto-routes fast vs agent vs vision-capable models locally, remembers prior turns, and keeps an audit trail of context + tool activity at <code>~/.jarvis/audit/events.jsonl</code>.</p>
           </div>
         </div>
       </section>
@@ -192,7 +199,7 @@ run-jarvis.bat</code></pre>
           <div class="cap-card">
             <div class="cap-icon">$</div>
             <h3>Agent system tools</h3>
-            <p>Runs shell commands, reads/writes files, captures screenshots, clipboard access, notifications, and browser open actions.</p>
+            <p>Runs shell commands, reads/writes files, captures screenshots, clipboard access, notifications, and browser actions with explicit local permission classes.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">&lt;&gt;</div>
@@ -212,12 +219,12 @@ run-jarvis.bat</code></pre>
           <div class="cap-card">
             <div class="cap-icon">~</div>
             <h3>Smoother desktop UX</h3>
-            <p>Token streaming, prompt queueing while generating, Picture-in-Picture mode, fast/agent mode toggle, and compact chat controls.</p>
+            <p>Token streaming, prompt queueing while generating, Picture-in-Picture mode, fast/agent mode toggle, multi-turn memory, and automatic local model routing.</p>
           </div>
           <div class="cap-card">
             <div class="cap-icon">0</div>
-            <h3>OpenAI-compatible API</h3>
-            <p>Use local OpenAI-style endpoints for chat + models while keeping compute and data fully on-device with zero telemetry.</p>
+            <h3>Trustable local ops</h3>
+            <p>Use local OpenAI-style endpoints while keeping compute on-device, blocking remote Ollama by default, and auditing what context and actions Jarvis used.</p>
           </div>
         </div>
       </section>
@@ -272,6 +279,60 @@ run-jarvis.bat</code></pre>
           <span class="feature-num">03</span>
           <h3>OpenAI-Compatible API</h3>
           <p>Point any SDK at <code>http://127.0.0.1:8080/v1</code> for local chat and model listing.</p>
+        </div>
+      </section>
+
+      <section class="pricing anim-in" id="pricing">
+        <div class="section-label">Pricing</div>
+        <h2>Free to try. Paid when it saves real time.</h2>
+        <p class="pricing-lead">
+          Jarvis is at a strong private-beta stage. That is enough for a freemium model, not a hard paywall.
+          The local core should stay easy to try; the paid layer should be for early supporters, premium workflows,
+          and faster onboarding.
+        </p>
+        <div class="pricing-grid">
+          <article class="price-card">
+            <div class="price-eyebrow">Free</div>
+            <h3 id="free-plan-name">Local Core</h3>
+            <div id="free-plan-price" class="price-value">Free</div>
+            <p class="price-copy">
+              Full local desktop, CLI, API, Obsidian context, calendar context, local retrieval, and downloadable releases.
+            </p>
+            <ul class="price-list">
+              <li>Desktop + CLI + API</li>
+              <li>Local vault and schedule context</li>
+              <li>Ollama-based local models</li>
+              <li>Free downloads and source access</li>
+            </ul>
+            <a class="btn btn-ghost" href="#download">Download Free</a>
+          </article>
+          <article class="price-card price-card--featured">
+            <div class="price-eyebrow">Pro Beta</div>
+            <h3 id="pro-plan-name">Pro Beta</h3>
+            <div id="pro-plan-price" class="price-value">$29 one-time beta seat</div>
+            <p id="pro-plan-description" class="price-copy">
+              Early supporter tier for priority onboarding, premium workflow packs, and direct feedback access while the product hardens.
+            </p>
+            <ul class="price-list">
+              <li>Priority onboarding help</li>
+              <li>Premium workflow templates</li>
+              <li>Early access to higher-leverage features</li>
+              <li>Direct product feedback channel</li>
+            </ul>
+            <div class="price-actions">
+              <a
+                id="stripe-checkout"
+                class="btn btn-primary"
+                href="#pricing"
+                rel="noreferrer"
+                aria-disabled="true"
+              >Join Pro Beta</a>
+              <a id="support-link" class="btn btn-ghost" href="https://github.com/Nivetha200111/Jarvis/issues" target="_blank" rel="noreferrer">Contact / Feedback</a>
+            </div>
+            <p id="stripe-status" class="price-note">
+              Stripe checkout is ready to wire. Add your Stripe Payment Link in <code>site/site-config.js</code> to enable it.
+            </p>
+          </article>
         </div>
       </section>
 

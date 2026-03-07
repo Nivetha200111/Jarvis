@@ -1,6 +1,6 @@
 import { execFileSync, execSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import type { ToolDefinition } from '../types/index.js'
+import type { ToolDefinition, ToolPermissionSet } from '../types/index.js'
 import type { ObsidianVaultService } from '../services/obsidian-vault.js'
 import type { RagService } from '../services/rag-service.js'
 import type { CalendarService } from '../services/calendar-service.js'
@@ -20,6 +20,7 @@ export interface ToolExecutionContext {
   ragService?: RagService
   calendarService?: CalendarService
   system?: SystemToolCallbacks
+  permissions?: Partial<ToolPermissionSet>
 }
 
 const toObjectSchema = (
@@ -106,7 +107,7 @@ const systemTools: ToolDefinition[] = [
   }
 ]
 
-const baseTools: ToolDefinition[] = [
+const shellTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
@@ -119,7 +120,10 @@ const baseTools: ToolDefinition[] = [
         ['command']
       )
     }
-  },
+  }
+]
+
+const fileTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
@@ -356,12 +360,77 @@ const formatLargeText = (content: string, maxChars = 8_000): string => {
   return `${content.slice(0, maxChars)}\n...(truncated ${remaining} chars)`
 }
 
+const DEFAULT_TOOL_PERMISSIONS: ToolPermissionSet = {
+  shell: true,
+  files: true,
+  system: true,
+  obsidian: true,
+  rag: true,
+  calendar: true
+}
+
+type PermissionKey = keyof ToolPermissionSet
+
+const TOOL_PERMISSION_MAP: Partial<Record<string, PermissionKey>> = {
+  run_command: 'shell',
+  read_file: 'files',
+  write_file: 'files',
+  list_directory: 'files',
+  extract_zip: 'files',
+  screenshot: 'system',
+  get_system_info: 'system',
+  get_active_window: 'system',
+  open_url: 'system',
+  notify: 'system',
+  get_clipboard: 'system',
+  set_clipboard: 'system',
+  obsidian_status: 'obsidian',
+  obsidian_connect: 'obsidian',
+  obsidian_list_notes: 'obsidian',
+  obsidian_search_notes: 'obsidian',
+  obsidian_read_note: 'obsidian',
+  obsidian_write_note: 'obsidian',
+  rag_search: 'rag',
+  rag_index: 'rag',
+  rag_stats: 'rag',
+  calendar_upcoming: 'calendar',
+  calendar_add_event: 'calendar',
+  calendar_stats: 'calendar'
+}
+
+export const resolveToolPermissions = (
+  permissions: Partial<ToolPermissionSet> = {}
+): ToolPermissionSet => ({
+  ...DEFAULT_TOOL_PERMISSIONS,
+  ...permissions
+})
+
+export const toToolPermissionSummary = (permissions: Partial<ToolPermissionSet> = {}): string => {
+  const resolved = resolveToolPermissions(permissions)
+  const enabled = Object.entries(resolved)
+    .filter(([, value]) => value)
+    .map(([key]) => key)
+  const disabled = Object.entries(resolved)
+    .filter(([, value]) => !value)
+    .map(([key]) => key)
+
+  if (disabled.length === 0) {
+    return `Agent permissions: full local access (${enabled.join(', ')}).`
+  }
+
+  return `Agent permissions: enabled ${enabled.join(', ')}; disabled ${disabled.join(', ')}.`
+}
+
 export const createAgentTools = (context: ToolExecutionContext = {}): ToolDefinition[] => {
-  const tools = [...baseTools]
-  if (context.system) tools.push(...systemTools)
-  if (context.obsidianVault) tools.push(...obsidianTools)
-  if (context.ragService) tools.push(...ragTools)
-  if (context.calendarService) tools.push(...calendarTools)
+  const permissions = resolveToolPermissions(context.permissions)
+  const tools: ToolDefinition[] = []
+
+  if (permissions.shell) tools.push(...shellTools)
+  if (permissions.files) tools.push(...fileTools)
+  if (permissions.system && context.system) tools.push(...systemTools)
+  if (permissions.obsidian && context.obsidianVault) tools.push(...obsidianTools)
+  if (permissions.rag && context.ragService) tools.push(...ragTools)
+  if (permissions.calendar && context.calendarService) tools.push(...calendarTools)
   return tools
 }
 
@@ -373,6 +442,15 @@ export const executeTool = async (
   context: ToolExecutionContext = {}
 ): Promise<{ output: string; success: boolean }> => {
   try {
+    const permissions = resolveToolPermissions(context.permissions)
+    const requiredPermission = TOOL_PERMISSION_MAP[name]
+    if (requiredPermission && !permissions[requiredPermission]) {
+      return {
+        output: `${name} is disabled by the current Jarvis agent permission profile (${requiredPermission}).`,
+        success: false
+      }
+    }
+
     switch (name) {
       case 'run_command': {
         const command = String(args.command ?? '')

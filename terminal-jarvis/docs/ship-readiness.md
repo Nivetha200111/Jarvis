@@ -12,7 +12,7 @@ Use this checklist before publishing a release.
 
 ## Local Setup Experience
 
-- [ ] Portable launcher auto-checks Ollama models (`qwen2.5` variants + `nomic-embed-text`).
+- [ ] Portable launcher auto-checks Ollama models (`qwen2.5` chat variants + `qwen2.5vl`/`llava` vision variants + `nomic-embed-text`).
 - [ ] Linux bundle starts with `./run-jarvis.sh`.
 - [ ] Windows bundle starts with `run-jarvis.bat`.
 - [ ] Download links on website point to existing release assets.

@@ -24,6 +24,7 @@ export interface ModelManager {
   getById(id: string): ModelInfo | undefined
   resolveModel(input?: string): ModelInfo | undefined
   registerAlias(alias: string, modelId: string): void
+  sync(models: ModelInfo[], aliases?: Record<string, string>): void
 }
 
 export interface CreateModelManagerOptions {
@@ -87,10 +88,25 @@ export const createModelManager = (options: CreateModelManagerOptions = {}): Mod
     aliases.set(alias, modelId)
   }
 
+  const sync = (nextModels: ModelInfo[], nextAliases?: Record<string, string>): void => {
+    models.clear()
+    for (const model of nextModels) {
+      models.set(model.id, model)
+    }
+
+    if (nextAliases) {
+      aliases.clear()
+      for (const [alias, modelId] of Object.entries(nextAliases)) {
+        aliases.set(alias, modelId)
+      }
+    }
+  }
+
   return {
     list,
     getById,
     resolveModel,
-    registerAlias
+    registerAlias,
+    sync
   }
 }

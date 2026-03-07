@@ -4,9 +4,9 @@ import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { homedir, hostname, userInfo, cpus, totalmem, freemem, platform, release } from 'node:os'
-import { execSync } from 'node:child_process'
+import { execFileSync, execSync, spawn } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
-import type { CalendarEventInput, SystemToolCallbacks } from '@jarvis/core'
+import { discoverOllamaModels, type CalendarEventInput, type ModelInfo, type SystemToolCallbacks } from '@jarvis/core'
 import { createDesktopServices } from './create-services.js'
 import {
   calendarAddEvent,
@@ -17,9 +17,12 @@ import {
   disconnectObsidianVault,
   getHealth,
   getObsidianStatus,
+  getToolPermissions,
   listModels,
+  listRecentAuditRecords,
   listObsidianNotes,
   ragIndex,
+  recordAuditEvent,
   ragSearch,
   ragRemoveSource,
   ragStats,
@@ -58,6 +61,22 @@ const GOOGLE_TOKEN_PATH = join(homedir(), '.jarvis', 'calendar', 'google-oauth.j
 const GOOGLE_SYNC_LOOKBACK_DAYS = 7
 const GOOGLE_SYNC_LOOKAHEAD_DAYS = 365
 const MS_PER_DAY = 86_400_000
+const OLLAMA_LIBRARY_TAGS_URL = 'https://ollama.com/api/tags'
+const OLLAMA_CATALOG_TIMEOUT_MS = 20_000
+const ONBOARDING_STATE_PATH = join(homedir(), '.jarvis', 'desktop-onboarding.json')
+const BASELINE_MODEL_IDS = [
+  'qwen2.5:3b',
+  'qwen2.5:1.5b',
+  'qwen2.5',
+  'qwen2.5vl:3b',
+  'qwen2.5-vl:3b',
+  'llava:7b',
+  'llava',
+  'nomic-embed-text'
+] as const
+const BASELINE_MODEL_SET = new Set<string>(BASELINE_MODEL_IDS)
+const OLLAMA_MODEL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])?(?::[a-z0-9._-]+)?$/i
+const activeModelPulls = new Set<string>()
 
 interface GoogleTokenState {
   accessToken: string
@@ -90,6 +109,59 @@ interface GoogleCalendarApiEvent {
 interface GoogleCalendarApiResponse {
   items?: GoogleCalendarApiEvent[]
   nextPageToken?: string
+}
+
+interface OllamaLibraryModel {
+  name?: string
+  model?: string
+  modified_at?: string
+  size?: number
+  details?: {
+    family?: string
+    families?: string[] | null
+    parameter_size?: string
+    quantization_level?: string
+  }
+}
+
+interface OllamaCatalogModel {
+  id: string
+  name: string
+  sizeBytes: number
+  modifiedAt: string | null
+  family: string
+  parameterSize: string
+  quantization: string
+  installed: boolean
+  baseline: boolean
+}
+
+interface OllamaCatalogResponse {
+  models: OllamaCatalogModel[]
+  installedModelIds: string[]
+  baselineModelIds: string[]
+  source: 'remote' | 'installed' | 'none'
+  warning?: string
+}
+
+interface OllamaStatusResponse {
+  installed: boolean
+  running: boolean
+  provider: 'mock' | 'ollama'
+  warning?: string
+}
+
+interface OnboardingState {
+  complete: boolean
+  selectedExtraModels: string[]
+  completedAt: string | null
+}
+
+interface OllamaPullProgressEvent {
+  requestId: string
+  modelId: string
+  type: 'progress' | 'done' | 'error'
+  message: string
 }
 
 const toBase64Url = (value: Buffer): string =>
@@ -144,6 +216,333 @@ const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T
     return raced as T
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+const defaultOnboardingState = (): OnboardingState => ({
+  complete: false,
+  selectedExtraModels: [],
+  completedAt: null
+})
+
+const sanitizeModelIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return [...new Set(
+    value
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => OLLAMA_MODEL_ID_PATTERN.test(entry))
+  )]
+}
+
+const loadOnboardingState = (): OnboardingState => {
+  if (!existsSync(ONBOARDING_STATE_PATH)) {
+    return defaultOnboardingState()
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(ONBOARDING_STATE_PATH, 'utf8')) as Partial<OnboardingState>
+    return {
+      complete: parsed.complete === true,
+      selectedExtraModels: sanitizeModelIds(parsed.selectedExtraModels),
+      completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : null
+    }
+  } catch {
+    return defaultOnboardingState()
+  }
+}
+
+const saveOnboardingState = (nextState: Partial<OnboardingState>): OnboardingState => {
+  const current = loadOnboardingState()
+  const merged: OnboardingState = {
+    complete: nextState.complete ?? current.complete,
+    selectedExtraModels: nextState.selectedExtraModels
+      ? sanitizeModelIds(nextState.selectedExtraModels)
+      : current.selectedExtraModels,
+    completedAt: nextState.completedAt ?? current.completedAt
+  }
+
+  const dir = join(homedir(), '.jarvis')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(ONBOARDING_STATE_PATH, JSON.stringify(merged, null, 2), 'utf8')
+  return merged
+}
+
+const isOllamaInstalled = (): boolean => {
+  try {
+    execFileSync('ollama', ['--version'], { stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getInstalledOllamaModels = (): ModelInfo[] => {
+  try {
+    return discoverOllamaModels()
+  } catch {
+    return []
+  }
+}
+
+const isOllamaResponsive = (): boolean => {
+  try {
+    execFileSync('ollama', ['list'], { stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getOllamaStatus = (): OllamaStatusResponse => {
+  const installed = isOllamaInstalled()
+  const installedModels = installed ? getInstalledOllamaModels() : []
+  const running = installed && isOllamaResponsive()
+
+  let warning: string | undefined
+  if (!installed) {
+    warning = 'Ollama is not installed on this machine yet.'
+  } else if (!running) {
+    warning = 'Ollama is installed but not responding. Start Ollama before pulling extra models.'
+  } else if (installedModels.length === 0 && services.provider !== 'ollama') {
+    warning = 'No local Ollama models are active yet. Jarvis may still be running with mock fallback until restart.'
+  } else if (services.provider !== 'ollama' && installedModels.length > 0) {
+    warning = 'Jarvis started without Ollama as the active runtime. Restart after model install if you want Ollama responses in this session.'
+  }
+
+  return {
+    installed,
+    running,
+    provider: services.provider,
+    warning
+  }
+}
+
+const normalizeCatalogModel = (
+  model: OllamaLibraryModel,
+  installedModelIds: Set<string>
+): OllamaCatalogModel | null => {
+  const id = model.model?.trim() || model.name?.trim()
+  if (!id) {
+    return null
+  }
+
+  const family = model.details?.family
+    || model.details?.families?.find((entry) => typeof entry === 'string' && entry.trim().length > 0)
+    || 'general'
+
+  return {
+    id,
+    name: id,
+    sizeBytes: typeof model.size === 'number' ? model.size : 0,
+    modifiedAt: typeof model.modified_at === 'string' ? model.modified_at : null,
+    family,
+    parameterSize: model.details?.parameter_size ?? '',
+    quantization: model.details?.quantization_level ?? '',
+    installed: installedModelIds.has(id),
+    baseline: BASELINE_MODEL_SET.has(id)
+  }
+}
+
+const toFallbackCatalogModel = (model: ModelInfo): OllamaCatalogModel => ({
+  id: model.id,
+  name: model.name,
+  sizeBytes: model.sizeBytes,
+  modifiedAt: null,
+  family: 'local',
+  parameterSize: '',
+  quantization: model.quantization,
+  installed: true,
+  baseline: BASELINE_MODEL_SET.has(model.id)
+})
+
+const sortCatalogModels = (models: OllamaCatalogModel[]): OllamaCatalogModel[] =>
+  [...models].sort((left, right) => {
+    const leftTime = left.modifiedAt ? Date.parse(left.modifiedAt) : 0
+    const rightTime = right.modifiedAt ? Date.parse(right.modifiedAt) : 0
+    if (rightTime !== leftTime) {
+      return rightTime - leftTime
+    }
+    return left.id.localeCompare(right.id)
+  })
+
+const getOllamaCatalog = async (): Promise<OllamaCatalogResponse> => {
+  const installedModels = getInstalledOllamaModels()
+  const installedIds = new Set(installedModels.map((model) => model.id))
+
+  try {
+    const response = await withTimeout(fetch(OLLAMA_LIBRARY_TAGS_URL), OLLAMA_CATALOG_TIMEOUT_MS)
+    if (!response.ok) {
+      throw new Error(`Catalog request failed with status ${response.status}`)
+    }
+
+    const payload = await response.json() as { models?: OllamaLibraryModel[] }
+    const deduped = new Map<string, OllamaCatalogModel>()
+
+    for (const model of payload.models ?? []) {
+      const normalized = normalizeCatalogModel(model, installedIds)
+      if (!normalized) {
+        continue
+      }
+      deduped.set(normalized.id, normalized)
+    }
+
+    return {
+      models: sortCatalogModels([...deduped.values()]),
+      installedModelIds: [...installedIds],
+      baselineModelIds: [...BASELINE_MODEL_SET],
+      source: 'remote'
+    }
+  } catch (error: unknown) {
+    const warning = error instanceof Error ? error.message : String(error)
+    return {
+      models: sortCatalogModels(installedModels.map(toFallbackCatalogModel)),
+      installedModelIds: [...installedIds],
+      baselineModelIds: [...BASELINE_MODEL_SET],
+      source: installedModels.length > 0 ? 'installed' : 'none',
+      warning: installedModels.length > 0
+        ? `Could not load the live Ollama catalog. Showing installed models only. ${warning}`
+        : `Could not load the live Ollama catalog. ${warning}`
+    }
+  }
+}
+
+const stripAnsi = (value: string): string => {
+  let result = ''
+
+  for (let index = 0; index < value.length; index += 1) {
+    const charCode = value.charCodeAt(index)
+    if (charCode !== 27) {
+      result += value[index] ?? ''
+      continue
+    }
+
+    index += 1
+    while (index < value.length) {
+      const nextCode = value.charCodeAt(index)
+      if (nextCode >= 64 && nextCode <= 126) {
+        break
+      }
+      index += 1
+    }
+  }
+
+  return result
+}
+
+const emitModelPullEvent = (
+  sender: Electron.WebContents,
+  payload: OllamaPullProgressEvent
+): void => {
+  if (!sender.isDestroyed()) {
+    sender.send('ollama:model-pull', payload)
+  }
+}
+
+const runOllamaModelPull = async (
+  sender: Electron.WebContents,
+  requestId: string,
+  modelId: string
+): Promise<void> => {
+  if (!OLLAMA_MODEL_ID_PATTERN.test(modelId)) {
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'error',
+      message: 'Invalid Ollama model id.'
+    })
+    return
+  }
+
+  if (!isOllamaInstalled()) {
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'error',
+      message: 'Ollama is not installed. Install Ollama before pulling extra models.'
+    })
+    return
+  }
+
+  if (activeModelPulls.has(modelId)) {
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'error',
+      message: `A pull is already in progress for ${modelId}.`
+    })
+    return
+  }
+
+  activeModelPulls.add(modelId)
+  let lastMessage = `Starting pull for ${modelId}...`
+  emitModelPullEvent(sender, {
+    requestId,
+    modelId,
+    type: 'progress',
+    message: lastMessage
+  })
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('ollama', ['pull', modelId], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+
+      const handleChunk = (chunk: Buffer): void => {
+        const lines = stripAnsi(chunk.toString('utf8'))
+          .split(/[\r\n]+/u)
+          .map((line) => line.trim())
+          .filter(Boolean)
+
+        for (const line of lines) {
+          if (line === lastMessage) {
+            continue
+          }
+          lastMessage = line
+          emitModelPullEvent(sender, {
+            requestId,
+            modelId,
+            type: 'progress',
+            message: line
+          })
+        }
+      }
+
+      child.stdout.on('data', handleChunk)
+      child.stderr.on('data', handleChunk)
+      child.once('error', reject)
+      child.once('close', (code) => {
+        if (code === 0) {
+          resolve()
+          return
+        }
+
+        reject(new Error(lastMessage || `ollama pull ${modelId} exited with code ${code ?? 'unknown'}`))
+      })
+    })
+
+    services.refreshModels()
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'done',
+      message: `${modelId} ready`
+    })
+  } catch (error: unknown) {
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'error',
+      message: error instanceof Error ? error.message : String(error)
+    })
+  } finally {
+    activeModelPulls.delete(modelId)
   }
 }
 
@@ -614,9 +1013,39 @@ const createTray = (): void => {
 }
 
 const registerIpc = (): void => {
+  ipcMain.handle('onboarding:get-state', async () => loadOnboardingState())
+  ipcMain.handle(
+    'onboarding:set-state',
+    async (
+      _event,
+      payload?: { complete?: boolean; selectedExtraModels?: string[] }
+    ) => saveOnboardingState({
+      complete: payload?.complete,
+      selectedExtraModels: payload?.selectedExtraModels,
+      completedAt: payload?.complete === true ? new Date().toISOString() : undefined
+    })
+  )
+  ipcMain.handle('ollama:status', async () => getOllamaStatus())
+  ipcMain.handle('ollama:catalog', async () => getOllamaCatalog())
   ipcMain.handle('chat:send', async (_event, request) => sendChat(services, request))
   ipcMain.handle('model:list', async () => listModels(services))
   ipcMain.handle('health:get', async () => getHealth(services))
+  ipcMain.handle('permissions:get', async () => getToolPermissions(services))
+  ipcMain.handle('audit:recent', async (_event, payload?: { limit?: number }) =>
+    listRecentAuditRecords(services, payload?.limit)
+  )
+  ipcMain.handle(
+    'audit:record',
+    async (
+      _event,
+      payload: {
+        category: 'permission' | 'context' | 'tool' | 'write' | 'system'
+        action: string
+        summary: string
+        detail?: Record<string, unknown>
+      }
+    ) => recordAuditEvent(services, payload)
+  )
   ipcMain.handle('obsidian:status', async () => getObsidianStatus(services))
   ipcMain.handle('obsidian:disconnect', async () => disconnectObsidianVault(services))
   ipcMain.handle('obsidian:list', async (_event, payload?: { limit?: number }) =>
@@ -721,6 +1150,13 @@ const registerIpc = (): void => {
         message: error instanceof Error ? error.message : String(error)
       }))
     }
+  })
+
+  ipcMain.on('ollama:model-pull', async (
+    event,
+    payload: { requestId: string; modelId: string }
+  ) => {
+    await runOllamaModelPull(event.sender, payload.requestId, payload.modelId)
   })
 
   ipcMain.on('chat:agent', async (

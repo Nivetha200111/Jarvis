@@ -4,6 +4,17 @@ Local-first AI assistant with a terminal experience, desktop app, and OpenAI-com
 
 Terminal Jarvis is designed for people who want local control, local data, and practical agent capabilities on their own machine.
 
+## Core Promise
+
+Terminal Jarvis is not trying to be a generic AI wrapper.
+
+The product promise is:
+
+- a private assistant for knowledge workers
+- local context from your vault, files, and schedule
+- real actions on your machine
+- no cloud dependency required for the core experience
+
 ## Why Terminal Jarvis
 
 - Fully local execution through Ollama-compatible models
@@ -13,6 +24,10 @@ Terminal Jarvis is designed for people who want local control, local data, and p
 - Local RAG retrieval from indexed files/notes
 - Optional live screen vision mode (vision-capable Ollama models)
 - Streaming output with queued prompts
+- Multi-turn conversation memory with local prompt compaction
+- Automatic fast/agent/vision model routing
+- Persistent audit trail for context use and tool actions
+- Agent permission profile with controllable tool classes
 - Deterministic prompt compaction for faster long sessions
 - Agent tools for shell/files/system actions
 - Linux + Windows portable release bundles
@@ -50,7 +65,10 @@ Bundle launchers:
 On first launch, the installer/launcher auto-provisions:
 
 - `qwen2.5:3b` (preferred), fallback to `qwen2.5:1.5b`, then `qwen2.5`
+- `qwen2.5vl:3b` (preferred), fallback to `qwen2.5-vl:3b`, then `llava:7b`/`llava` for live screen vision
 - `nomic-embed-text` for RAG embeddings
+
+After baseline setup, the desktop welcome screen can pull extra Ollama models from the live catalog before the user enters chat.
 
 ## Obsidian + RAG
 
@@ -92,6 +110,17 @@ Then restart desktop and click `Google Sync` once.
 - If you set permissive CORS (`*`/`true`), Jarvis logs a security warning
 - Ollama is local-only by default
   - Jarvis refuses non-local `OLLAMA_BASE_URL` values unless `JARVIS_ALLOW_REMOTE_OLLAMA=1`
+- Agent permissions are explicit and controllable
+  - `JARVIS_ENABLE_SHELL_TOOLS`
+  - `JARVIS_ENABLE_FILE_TOOLS`
+  - `JARVIS_ENABLE_SYSTEM_TOOLS`
+  - `JARVIS_ENABLE_OBSIDIAN_TOOLS`
+  - `JARVIS_ENABLE_RAG_TOOLS`
+  - `JARVIS_ENABLE_CALENDAR_TOOLS`
+- Jarvis writes a local audit trail to `~/.jarvis/audit/events.jsonl`
+  - context attached
+  - tool actions taken
+  - write operations performed
 - Agent mode has intentionally high local privileges (shell/files/system tools)
   - Jarvis logs a warning because this cannot be fully sandboxed without removing core features
 - Suppress warnings with `JARVIS_SUPPRESS_SECURITY_WARNINGS=1`
@@ -101,6 +130,8 @@ Then restart desktop and click `Google Sync` once.
 - Long prompts are compacted locally before inference
 - Older turns are folded into a deterministic memory block
 - Retrieved vault/RAG/schedule context is deduplicated and trimmed against the latest user request
+- Desktop keeps real multi-turn chat history instead of treating each message as an isolated one-off
+- Jarvis auto-picks fast local models for chat, stronger defaults for agent mode, and vision models for live screen flows
 - This keeps sessions faster without sending data to any external summarizer
 
 ## Private Beta Status

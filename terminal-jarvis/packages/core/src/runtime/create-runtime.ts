@@ -1,6 +1,7 @@
 import { createMockEngineAdapter } from '../engine/mock-engine-adapter.js'
 import { createOllamaEngineAdapter } from '../engine/ollama-engine-adapter.js'
 import { discoverOllamaModels } from '../services/ollama-model-discovery.js'
+import { pickRecommendedModelId } from '../services/model-router.js'
 import { createModelManager, type ModelManager } from '../services/model-manager.js'
 import type { EngineAdapter } from '../types/index.js'
 
@@ -50,6 +51,23 @@ const buildOllamaAliases = (modelIds: string[]): Record<string, string> => {
   return Object.fromEntries(aliases.entries())
 }
 
+const extendAliasesWithRecommendations = (
+  aliases: Record<string, string>,
+  modelManager: ModelManager
+): Record<string, string> => {
+  const models = modelManager.list()
+  const recommendedFast = pickRecommendedModelId(models, 'fast')
+  const recommendedAgent = pickRecommendedModelId(models, 'agent')
+  const recommendedVision = pickRecommendedModelId(models, 'vision')
+
+  return {
+    ...aliases,
+    ...(recommendedFast ? { fast: recommendedFast } : {}),
+    ...(recommendedAgent ? { agent: recommendedAgent } : {}),
+    ...(recommendedVision ? { vision: recommendedVision } : {})
+  }
+}
+
 export const createRuntimeSelection = (): RuntimeSelection => {
   const preferredProvider = toPreferredProvider()
 
@@ -57,17 +75,25 @@ export const createRuntimeSelection = (): RuntimeSelection => {
     try {
       const ollamaModels = discoverOllamaModels()
       if (preferredProvider === 'ollama' || ollamaModels.length > 0) {
+        const aliases = buildOllamaAliases(ollamaModels.map((model) => model.id))
         const modelManager = createModelManager({
           seedModels: ollamaModels,
-          aliases: buildOllamaAliases(ollamaModels.map((model) => model.id)),
+          aliases,
           allowUnknownResolve: true
         })
+        const extendedAliases = extendAliasesWithRecommendations(aliases, modelManager)
+        const routedModelManager = createModelManager({
+          seedModels: ollamaModels,
+          aliases: extendedAliases,
+          allowUnknownResolve: true
+        })
+        const defaultModel = pickRecommendedModelId(ollamaModels, 'fast') ?? ollamaModels[0]?.id ?? 'qwen2.5'
 
         return {
           provider: 'ollama',
-          modelManager,
-          engine: createOllamaEngineAdapter({ modelManager }),
-          defaultModel: ollamaModels[0]?.id ?? 'qwen2.5'
+          modelManager: routedModelManager,
+          engine: createOllamaEngineAdapter({ modelManager: routedModelManager }),
+          defaultModel
         }
       }
     } catch {

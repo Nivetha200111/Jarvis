@@ -20,6 +20,26 @@ export interface ToolDefinition {
   }
 }
 
+export interface ToolPermissionSet {
+  shell: boolean
+  files: boolean
+  system: boolean
+  obsidian: boolean
+  rag: boolean
+  calendar: boolean
+}
+
+export type AuditRecordCategory = 'permission' | 'context' | 'tool' | 'write' | 'system'
+
+export interface AuditRecord {
+  id: string
+  timestamp: number
+  category: AuditRecordCategory
+  action: string
+  summary: string
+  detail?: Record<string, unknown>
+}
+
 export interface ChatMessage {
   role: MessageRole
   content: string
@@ -91,6 +111,7 @@ export interface TranscriptRecord {
 }
 
 export type AgentEvent =
+  | { type: 'audit'; title: string; content: string }
   | { type: 'thinking'; content: string }
   | { type: 'tool_call'; name: string; arguments: Record<string, unknown> }
   | { type: 'tool_result'; name: string; output: string; success: boolean }

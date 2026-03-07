@@ -1,3 +1,5 @@
+import { siteConfig } from './site-config.js'
+
 const releasePageUrl = 'https://github.com/Nivetha200111/Jarvis/releases'
 const latestReleaseApi = 'https://api.github.com/repos/Nivetha200111/Jarvis/releases/latest'
 
@@ -6,6 +8,14 @@ const linuxDownloadButton = document.getElementById('linux-download')
 const windowsDownloadButton = document.getElementById('windows-download')
 const detectedOsLabel = document.getElementById('detected-os')
 const releaseNoteLabel = document.getElementById('release-note')
+const freePlanName = document.getElementById('free-plan-name')
+const freePlanPrice = document.getElementById('free-plan-price')
+const proPlanName = document.getElementById('pro-plan-name')
+const proPlanPrice = document.getElementById('pro-plan-price')
+const proPlanDescription = document.getElementById('pro-plan-description')
+const stripeCheckoutButton = document.getElementById('stripe-checkout')
+const stripeStatusLabel = document.getElementById('stripe-status')
+const supportLink = document.getElementById('support-link')
 
 const detectOs = () => {
   const platform = window.navigator.userAgent.toLowerCase()
@@ -137,6 +147,57 @@ const configureDownloadLinks = async () => {
 }
 
 void configureDownloadLinks()
+
+const configureMonetization = () => {
+  const monetization = siteConfig?.monetization
+  if (!monetization) {
+    return
+  }
+
+  if (freePlanName) {
+    freePlanName.textContent = monetization.freePlanName
+  }
+  if (freePlanPrice) {
+    freePlanPrice.textContent = monetization.freePlanPrice
+  }
+  if (proPlanName) {
+    proPlanName.textContent = monetization.proPlanName
+  }
+  if (proPlanPrice) {
+    proPlanPrice.textContent = monetization.proPlanPrice
+  }
+  if (proPlanDescription) {
+    proPlanDescription.textContent = monetization.proPlanDescription
+  }
+  if (supportLink && monetization.supportUrl) {
+    supportLink.href = monetization.supportUrl
+  }
+
+  if (!stripeCheckoutButton || !stripeStatusLabel) {
+    return
+  }
+
+  const stripePaymentLink = monetization.stripePaymentLink?.trim()
+
+  if (stripePaymentLink) {
+    stripeCheckoutButton.href = stripePaymentLink
+    stripeCheckoutButton.target = '_blank'
+    stripeCheckoutButton.rel = 'noreferrer'
+    stripeCheckoutButton.textContent = monetization.proPlanCta
+    stripeCheckoutButton.setAttribute('aria-disabled', 'false')
+    stripeCheckoutButton.classList.remove('btn-disabled')
+    stripeStatusLabel.textContent = 'Stripe checkout is live for the Pro Beta tier.'
+    return
+  }
+
+  stripeCheckoutButton.href = '#pricing'
+  stripeCheckoutButton.textContent = 'Stripe Link Pending'
+  stripeCheckoutButton.setAttribute('aria-disabled', 'true')
+  stripeCheckoutButton.classList.add('btn-disabled')
+  stripeStatusLabel.innerHTML = 'Stripe checkout is ready to wire. Add your Stripe Payment Link in <code>site/site-config.js</code> to enable it.'
+}
+
+configureMonetization()
 
 // scroll-triggered entrance animations
 const observer = new IntersectionObserver(

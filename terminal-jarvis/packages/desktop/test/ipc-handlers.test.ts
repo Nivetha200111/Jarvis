@@ -130,7 +130,28 @@ describe('desktop IPC handlers', () => {
       engine: { getLoadedModel: () => null } as DesktopServices['engine'],
       provider: 'mock' as DesktopServices['provider'],
       configManager: {} as DesktopServices['configManager'],
-      obsidianVaultService: {} as DesktopServices['obsidianVaultService']
+      obsidianVaultService: {} as DesktopServices['obsidianVaultService'],
+      calendarService: {} as DesktopServices['calendarService'],
+      ragService: {} as DesktopServices['ragService'],
+      refreshModels: () => [],
+      auditTrail: {
+        record: () => ({
+          id: 'audit-1',
+          timestamp: Date.now(),
+          category: 'system',
+          action: 'test',
+          summary: 'test'
+        }),
+        listRecent: () => []
+      } as DesktopServices['auditTrail'],
+      toolPermissions: {
+        shell: true,
+        files: true,
+        system: true,
+        obsidian: true,
+        rag: true,
+        calendar: true
+      }
     } as DesktopServices
 
     const seen: Array<'token' | 'done' | 'error'> = []

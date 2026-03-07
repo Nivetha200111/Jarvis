@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
+const EMBEDDING_MODEL = 'nomic-embed-text'
+const CHAT_MODEL_CANDIDATES = ['qwen2.5:3b', 'qwen2.5:1.5b', 'qwen2.5']
+const VISION_MODEL_CANDIDATES = ['qwen2.5vl:3b', 'qwen2.5-vl:3b', 'llava:7b', 'llava']
 
 const parseArgs = () => {
   const args = process.argv.slice(2)
@@ -59,7 +62,8 @@ Quick start:
 
 What gets set up automatically:
 - qwen2.5:3b (or qwen2.5:1.5b, then qwen2.5 fallback) — main chat/agent model
-- nomic-embed-text — local embeddings for RAG (knowledge base)
+- qwen2.5vl:3b (or qwen2.5-vl:3b, then llava fallback) — vision model for live screen mode
+- ${EMBEDDING_MODEL} — local embeddings for RAG (knowledge base)
 
 Notes:
 - No npm install is required for this bundle.
@@ -84,13 +88,13 @@ unset ELECTRON_RUN_AS_NODE
 if command -v ollama >/dev/null 2>&1; then
   echo "[jarvis] Checking Ollama models..."
 
-  if ! ollama show nomic-embed-text >/dev/null 2>&1; then
-    echo "[jarvis] Pulling nomic-embed-text for local RAG..."
-    ollama pull nomic-embed-text || echo "[jarvis] Warning: could not pull nomic-embed-text. RAG may be unavailable."
+  if ! ollama show ${EMBEDDING_MODEL} >/dev/null 2>&1; then
+    echo "[jarvis] Pulling ${EMBEDDING_MODEL} for local RAG..."
+    ollama pull ${EMBEDDING_MODEL} || echo "[jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable."
   fi
 
   CHAT_MODEL=""
-  for CANDIDATE in qwen2.5:3b qwen2.5:1.5b qwen2.5; do
+  for CANDIDATE in ${CHAT_MODEL_CANDIDATES.join(' ')}; do
     if ollama show "$CANDIDATE" >/dev/null 2>&1; then
       CHAT_MODEL="$CANDIDATE"
       break
@@ -98,7 +102,7 @@ if command -v ollama >/dev/null 2>&1; then
   done
 
   if [ -z "$CHAT_MODEL" ]; then
-    for CANDIDATE in qwen2.5:3b qwen2.5:1.5b qwen2.5; do
+    for CANDIDATE in ${CHAT_MODEL_CANDIDATES.join(' ')}; do
       echo "[jarvis] Pulling $CANDIDATE..."
       if ollama pull "$CANDIDATE"; then
         CHAT_MODEL="$CANDIDATE"
@@ -112,6 +116,31 @@ if command -v ollama >/dev/null 2>&1; then
     echo "[jarvis] Chat model ready: $CHAT_MODEL"
   else
     echo "[jarvis] Warning: no chat model available from auto-setup list."
+  fi
+
+  VISION_MODEL=""
+  for CANDIDATE in ${VISION_MODEL_CANDIDATES.join(' ')}; do
+    if ollama show "$CANDIDATE" >/dev/null 2>&1; then
+      VISION_MODEL="$CANDIDATE"
+      break
+    fi
+  done
+
+  if [ -z "$VISION_MODEL" ]; then
+    for CANDIDATE in ${VISION_MODEL_CANDIDATES.join(' ')}; do
+      echo "[jarvis] Pulling vision model $CANDIDATE..."
+      if ollama pull "$CANDIDATE"; then
+        VISION_MODEL="$CANDIDATE"
+        break
+      fi
+      echo "[jarvis] Warning: failed to pull vision model $CANDIDATE"
+    done
+  fi
+
+  if [ -n "$VISION_MODEL" ]; then
+    echo "[jarvis] Vision model ready: $VISION_MODEL"
+  else
+    echo "[jarvis] Warning: no vision model available from auto-setup list. Live screen mode may be unavailable."
   fi
 else
   echo "[jarvis] Ollama not found. Jarvis will run with mock fallback until Ollama is installed."
@@ -131,6 +160,7 @@ set "SCRIPT_DIR=%~dp0"
 if "%JARVIS_ENGINE%"=="" set "JARVIS_ENGINE=auto"
 set "ELECTRON_RUN_AS_NODE="
 set "CHAT_MODEL="
+set "VISION_MODEL="
 
 REM Auto-setup: ensure Ollama has required models
 where ollama >nul 2>&1
@@ -140,14 +170,14 @@ if errorlevel 1 (
 )
 
 echo [jarvis] Checking Ollama models...
-ollama show nomic-embed-text >nul 2>&1
+ollama show ${EMBEDDING_MODEL} >nul 2>&1
 if errorlevel 1 (
-  echo [jarvis] Pulling nomic-embed-text for local RAG...
-  ollama pull nomic-embed-text >nul 2>&1
-  if errorlevel 1 echo [jarvis] Warning: could not pull nomic-embed-text. RAG may be unavailable.
+  echo [jarvis] Pulling ${EMBEDDING_MODEL} for local RAG...
+  ollama pull ${EMBEDDING_MODEL} >nul 2>&1
+  if errorlevel 1 echo [jarvis] Warning: could not pull ${EMBEDDING_MODEL}. RAG may be unavailable.
 )
 
-for %%M in (qwen2.5:3b qwen2.5:1.5b qwen2.5) do (
+for %%M in (${CHAT_MODEL_CANDIDATES.join(' ')}) do (
   if not defined CHAT_MODEL (
     ollama show %%M >nul 2>&1
     if not errorlevel 1 set "CHAT_MODEL=%%M"
@@ -155,7 +185,7 @@ for %%M in (qwen2.5:3b qwen2.5:1.5b qwen2.5) do (
 )
 
 if not defined CHAT_MODEL (
-  for %%M in (qwen2.5:3b qwen2.5:1.5b qwen2.5) do (
+  for %%M in (${CHAT_MODEL_CANDIDATES.join(' ')}) do (
     if not defined CHAT_MODEL (
       echo [jarvis] Pulling %%M...
       ollama pull %%M >nul 2>&1
@@ -168,6 +198,29 @@ if defined CHAT_MODEL (
   echo [jarvis] Chat model ready: %CHAT_MODEL%
 ) else (
   echo [jarvis] Warning: no chat model available from auto-setup list.
+)
+
+for %%M in (${VISION_MODEL_CANDIDATES.join(' ')}) do (
+  if not defined VISION_MODEL (
+    ollama show %%M >nul 2>&1
+    if not errorlevel 1 set "VISION_MODEL=%%M"
+  )
+)
+
+if not defined VISION_MODEL (
+  for %%M in (${VISION_MODEL_CANDIDATES.join(' ')}) do (
+    if not defined VISION_MODEL (
+      echo [jarvis] Pulling vision model %%M...
+      ollama pull %%M >nul 2>&1
+      if not errorlevel 1 set "VISION_MODEL=%%M"
+    )
+  )
+)
+
+if defined VISION_MODEL (
+  echo [jarvis] Vision model ready: %VISION_MODEL%
+) else (
+  echo [jarvis] Warning: no vision model available from auto-setup list. Live screen mode may be unavailable.
 )
 
 :launch

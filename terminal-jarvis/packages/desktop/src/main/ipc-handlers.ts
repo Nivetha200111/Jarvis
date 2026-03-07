@@ -1,5 +1,7 @@
 import type {
   AgentEvent,
+  AuditRecord,
+  AuditRecordCategory,
   ChatCompletionRequest,
   TokenChunk,
   ObsidianVaultStatus,
@@ -87,12 +89,27 @@ export const runAgent = async (
   }
 }
 
-export const listModels = (services: DesktopServices) => services.modelManager.list()
+export const listModels = (services: DesktopServices) => services.refreshModels()
 
 export const getHealth = (services: DesktopServices): { status: 'ok'; loadedModel: string | null } => ({
   status: 'ok',
   loadedModel: services.engine.getLoadedModel()?.id ?? null
 })
+
+export const getToolPermissions = (services: DesktopServices) => services.toolPermissions
+
+export const listRecentAuditRecords = (services: DesktopServices, limit?: number): AuditRecord[] =>
+  services.auditTrail.listRecent(limit)
+
+export const recordAuditEvent = (
+  services: DesktopServices,
+  payload: {
+    category: AuditRecordCategory
+    action: string
+    summary: string
+    detail?: Record<string, unknown>
+  }
+): AuditRecord => services.auditTrail.record(payload)
 
 export const connectObsidianVault = (
   services: DesktopServices,
