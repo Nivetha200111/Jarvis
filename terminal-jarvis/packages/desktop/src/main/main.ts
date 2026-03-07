@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Notification, screen, shell, desktopCapturer, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Notification, screen, shell, desktopCapturer, Tray, Menu, nativeImage, session } from 'electron'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
@@ -40,6 +40,8 @@ const currentDir = __dirname
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isPip = false
+let prePipBounds: Electron.Rectangle | null = null
+let displayCaptureConfigured = false
 
 if (process.platform === 'linux') {
   const ozonePlatform = process.env.JARVIS_OZONE_PLATFORM?.trim()
@@ -1156,6 +1158,40 @@ const getSystemInfo = (): Record<string, string> => {
   }
 }
 
+const configureDisplayCapture = (): void => {
+  if (displayCaptureConfigured) {
+    return
+  }
+
+  const targetSession = session.defaultSession
+  targetSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 640, height: 360 }
+      })
+
+      const primaryDisplayId = String(screen.getPrimaryDisplay().id)
+      const source = sources.find((entry) => entry.display_id === primaryDisplayId) ?? sources[0]
+      if (!source) {
+        callback({})
+        return
+      }
+
+      callback({
+        video: {
+          id: source.id,
+          name: source.name
+        }
+      })
+    } catch {
+      callback({})
+    }
+  })
+
+  displayCaptureConfigured = true
+}
+
 // System tool callbacks for the agent
 const systemCallbacks: SystemToolCallbacks = {
   captureScreen: async () => captureScreen(),
@@ -1176,6 +1212,8 @@ if (DESKTOP_E2E_MODE) {
 }
 
 const createWindow = async (): Promise<BrowserWindow> => {
+  configureDisplayCapture()
+
   const window = new BrowserWindow({
     width: FULL_WIDTH,
     height: FULL_HEIGHT,
@@ -1206,18 +1244,27 @@ const togglePip = (): void => {
 
   isPip = !isPip
   if (isPip) {
-    const display = screen.getPrimaryDisplay()
-    const { width: sw, height: sh } = display.workAreaSize
-    mainWindow.setAlwaysOnTop(true, 'floating')
+    prePipBounds = mainWindow.getBounds()
+    const currentDisplay = screen.getDisplayMatching(prePipBounds)
+    const { x: wx, y: wy, width: sw, height: sh } = currentDisplay.workArea
+    const pipLevel = process.platform === 'win32' ? 'screen-saver' as const : 'floating' as const
+    mainWindow.setAlwaysOnTop(true, pipLevel)
+    mainWindow.setMinimumSize(280, 200)
     mainWindow.setSize(PIP_WIDTH, PIP_HEIGHT, true)
-    mainWindow.setPosition(sw - PIP_WIDTH - 20, sh - PIP_HEIGHT - 20, true)
+    mainWindow.setPosition(wx + sw - PIP_WIDTH - 16, wy + sh - PIP_HEIGHT - 16, true)
     mainWindow.setResizable(true)
-    mainWindow.setMinimumSize(320, 240)
+    mainWindow.setSkipTaskbar(true)
   } else {
     mainWindow.setAlwaysOnTop(false)
-    mainWindow.setSize(FULL_WIDTH, FULL_HEIGHT, true)
-    mainWindow.center()
+    mainWindow.setSkipTaskbar(false)
     mainWindow.setMinimumSize(380, 300)
+    if (prePipBounds) {
+      mainWindow.setBounds(prePipBounds, true)
+      prePipBounds = null
+    } else {
+      mainWindow.setSize(FULL_WIDTH, FULL_HEIGHT, true)
+      mainWindow.center()
+    }
   }
   mainWindow.webContents.send('pip:changed', isPip)
 }

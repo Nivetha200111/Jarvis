@@ -36,6 +36,8 @@ const VAULT_INDEX_NOTE_LIMIT = 2_000
 const VAULT_INDEX_IDLE_DELAY_MS = 120
 const VAULT_INDEX_TEXT_MAX_CHARS = 36_000
 const LIVE_SCREEN_REFRESH_MS = 1_800
+const LIVE_SCREEN_MAX_WIDTH = 1024
+const LIVE_SCREEN_MAX_HEIGHT = 576
 const VISION_MODEL_PATTERN = /(llava|vision|moondream|bakllava|qwen2\.5(?:-|:)?vl|llama3\.2-vision)/i
 const CALENDAR_CONTEXT_EVENT_LIMIT = 6
 const CALENDAR_CONTEXT_HORIZON_DAYS = 14
@@ -129,6 +131,29 @@ const createDefaultCalendarDraft = (): LocalCalendarDraft => {
     title: '',
     start: toDateTimeInputValue(start),
     end: toDateTimeInputValue(new Date(start.getTime() + 60 * 60_000))
+  }
+}
+
+const fitLiveScreenDimensions = (
+  width: number,
+  height: number
+): { width: number; height: number } => {
+  if (width <= 0 || height <= 0) {
+    return {
+      width: LIVE_SCREEN_MAX_WIDTH,
+      height: LIVE_SCREEN_MAX_HEIGHT
+    }
+  }
+
+  const scale = Math.min(
+    LIVE_SCREEN_MAX_WIDTH / width,
+    LIVE_SCREEN_MAX_HEIGHT / height,
+    1
+  )
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
   }
 }
 
@@ -989,6 +1014,7 @@ const CSS = `
     animation: dotPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
   .tb-spacer { flex: 1; }
+  .toolbar--pip .tb-spacer { display: none; }
 
   /* ---- CHAT AREA ---- */
   .chat-area {
@@ -1022,6 +1048,20 @@ const CSS = `
     flex-wrap: wrap;
     gap: 6px;
     border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .attach-bar--pip {
+    padding: 4px 10px;
+    gap: 4px;
+    max-height: 52px;
+    overflow: hidden;
+  }
+  .attach-bar--pip .attach-chip {
+    font-size: 0.6rem;
+    padding: 3px 8px;
+    max-width: 100px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .attach-chip {
     display: inline-flex;
@@ -1217,6 +1257,9 @@ export const App = () => {
   const vaultIndexRunRef = useRef(0)
   const streamUnsubscribeRef = useRef<(() => void) | null>(null)
   const noteContentCacheRef = useRef<Map<string, string>>(new Map())
+  const liveScreenStreamRef = useRef<MediaStream | null>(null)
+  const liveScreenVideoRef = useRef<HTMLVideoElement | null>(null)
+  const liveScreenCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
   useEffect(() => {
     window.jarvis.modelList().then((items) => {
@@ -1261,18 +1304,133 @@ export const App = () => {
   useEffect(() => { statusRef.current = status }, [status])
   useEffect(() => { busyRef.current = busy }, [busy])
 
+  const stopLiveScreenSession = useCallback((): void => {
+    const stream = liveScreenStreamRef.current
+    if (stream) {
+      for (const track of stream.getTracks()) {
+        track.stop()
+      }
+    }
+
+    const video = liveScreenVideoRef.current
+    if (video) {
+      video.pause()
+      video.srcObject = null
+    }
+
+    liveScreenStreamRef.current = null
+    liveScreenVideoRef.current = null
+    liveScreenCanvasRef.current = null
+  }, [])
+
+  const waitForLiveScreenVideo = useCallback(async (video: HTMLVideoElement): Promise<void> => {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
+      return
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const handleLoaded = (): void => {
+        cleanup()
+        resolve()
+      }
+      const handleError = (): void => {
+        cleanup()
+        reject(new Error('Live screen stream failed to initialize.'))
+      }
+      const cleanup = (): void => {
+        video.removeEventListener('loadedmetadata', handleLoaded)
+        video.removeEventListener('error', handleError)
+      }
+
+      video.addEventListener('loadedmetadata', handleLoaded)
+      video.addEventListener('error', handleError)
+    })
+  }, [])
+
+  const captureRendererLiveScreenFrame = useCallback(async (): Promise<LiveScreenFrame> => {
+    const mediaDevices = navigator.mediaDevices
+    if (!mediaDevices?.getDisplayMedia) {
+      throw new Error('Live screen capture is not available in this runtime.')
+    }
+
+    let stream = liveScreenStreamRef.current
+    let video = liveScreenVideoRef.current
+
+    if (!stream || !video) {
+      stream = await mediaDevices.getDisplayMedia({
+        video: {
+          frameRate: {
+            ideal: 1,
+            max: 2
+          }
+        },
+        audio: false
+      })
+
+      video = document.createElement('video')
+      video.muted = true
+      video.playsInline = true
+      video.srcObject = stream
+
+      const [track] = stream.getVideoTracks()
+      if (track) {
+        track.addEventListener('ended', () => {
+          stopLiveScreenSession()
+          setLiveScreenFrame(null)
+          setLiveScreenError('Live screen capture ended.')
+          setLiveScreenMode(false)
+        }, { once: true })
+      }
+
+      liveScreenStreamRef.current = stream
+      liveScreenVideoRef.current = video
+      await video.play()
+      await waitForLiveScreenVideo(video)
+    }
+
+    const width = video.videoWidth || LIVE_SCREEN_MAX_WIDTH
+    const height = video.videoHeight || LIVE_SCREEN_MAX_HEIGHT
+    const fitted = fitLiveScreenDimensions(width, height)
+    const canvas = liveScreenCanvasRef.current ?? document.createElement('canvas')
+    canvas.width = fitted.width
+    canvas.height = fitted.height
+    liveScreenCanvasRef.current = canvas
+
+    const context = canvas.getContext('2d')
+    if (!context) {
+      throw new Error('Live screen canvas is unavailable.')
+    }
+
+    context.drawImage(video, 0, 0, fitted.width, fitted.height)
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.72).replace(/^data:image\/jpeg;base64,/, '')
+    const activeWindow = await window.jarvis.getActiveWindow().catch(() => 'unknown')
+
+    return {
+      imageBase64,
+      width: fitted.width,
+      height: fitted.height,
+      timestamp: new Date().toISOString(),
+      activeWindow
+    }
+  }, [stopLiveScreenSession, waitForLiveScreenVideo])
+
   useEffect(() => {
     if (!liveScreenMode) {
+      stopLiveScreenSession()
       setLiveScreenFrame(null)
       setLiveScreenError(null)
       return
     }
 
     let cancelled = false
+    const canUseRendererLiveScreen = !navigator.webdriver
+      && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
 
     const captureFrame = async (): Promise<void> => {
       try {
-        const frame = await window.jarvis.captureScreenFrame()
+        const frame = canUseRendererLiveScreen
+          ? await captureRendererLiveScreenFrame()
+          : await window.jarvis.captureScreenFrame()
         if (cancelled) {
           return
         }
@@ -1283,6 +1441,10 @@ export const App = () => {
           return
         }
         const message = error instanceof Error ? error.message : String(error)
+        if (!liveScreenStreamRef.current) {
+          stopLiveScreenSession()
+          setLiveScreenMode(false)
+        }
         setLiveScreenError(message)
       }
     }
@@ -1296,7 +1458,7 @@ export const App = () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [liveScreenMode])
+  }, [captureRendererLiveScreenFrame, liveScreenMode, stopLiveScreenSession])
 
   useEffect(() => {
     noteContentCacheRef.current.clear()
@@ -2058,8 +2220,9 @@ export const App = () => {
     }
   }
 
-  const handleToggleLiveScreen = (): void => {
+  const handleToggleLiveScreen = async (): Promise<void> => {
     if (liveScreenMode) {
+      stopLiveScreenSession()
       setLiveScreenMode(false)
       setStatusSafe('live screen off')
       return
@@ -2081,13 +2244,30 @@ export const App = () => {
       }
     }
 
+    const canUseRendererLiveScreen = !navigator.webdriver
+      && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+
+    if (canUseRendererLiveScreen) {
+      setStatusSafe('requesting screen...')
+      try {
+        const frame = await captureRendererLiveScreenFrame()
+        setLiveScreenFrame(frame)
+        setLiveScreenError(null)
+      } catch (error: unknown) {
+        stopLiveScreenSession()
+        pushErrorEntry(`Live screen: ${error instanceof Error ? error.message : String(error)}`)
+        setStatusSafe('ready')
+        return
+      }
+    }
+
     setLiveScreenMode(true)
     setStatusSafe('live screen on')
     setEntries((prev) => [
       ...prev,
       {
         type: 'thinking',
-        content: 'Live screen enabled. Jarvis will attach the latest screen frame to each prompt.'
+        content: 'Live screen enabled. Jarvis will keep using the current shared screen until you turn it off.'
       }
     ])
   }
@@ -2114,6 +2294,7 @@ export const App = () => {
   }
 
   useEffect(() => () => teardownStream(), [teardownStream])
+  useEffect(() => () => stopLiveScreenSession(), [stopLiveScreenSession])
 
   const sendMessage = useCallback(async (text: string): Promise<void> => {
     if (!text.trim()) return
@@ -2387,22 +2568,26 @@ export const App = () => {
             >
               {pipMode ? '[]' : '..'}
             </button>
-            <button
-              type="button"
-              className="win-ctrl"
-              onClick={() => window.jarvis.minimize()}
-              title="Minimize"
-            >
-              _
-            </button>
-            <button
-              type="button"
-              className="win-ctrl win-ctrl--close"
-              onClick={() => window.jarvis.closeWindow()}
-              title="Close"
-            >
-              x
-            </button>
+            {!pipMode && (
+              <button
+                type="button"
+                className="win-ctrl"
+                onClick={() => window.jarvis.minimize()}
+                title="Minimize"
+              >
+                _
+              </button>
+            )}
+            {!pipMode && (
+              <button
+                type="button"
+                className="win-ctrl win-ctrl--close"
+                onClick={() => window.jarvis.closeWindow()}
+                title="Close"
+              >
+                x
+              </button>
+            )}
           </div>
         </div>
 
@@ -2519,7 +2704,7 @@ export const App = () => {
           <button
             type="button"
             className={`tb-btn tb-btn--live ${liveScreenMode ? 'tb-btn--active' : ''}`}
-            onClick={handleToggleLiveScreen}
+            onClick={() => { void handleToggleLiveScreen() }}
             title="Continuously capture screen frames and attach to prompts"
             data-testid="live-screen-toggle"
           >
@@ -2589,19 +2774,21 @@ export const App = () => {
             </span>
           )}
 
-          <select
-            className="tb-select"
-            value={selectedModel}
-            onChange={(e) => {
-              setModelPinned(true)
-              setSelectedModel(e.target.value)
-            }}
-            data-testid="model-select"
-          >
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>{model.id}</option>
-            ))}
-          </select>
+          {!pipMode && (
+            <select
+              className="tb-select"
+              value={selectedModel}
+              onChange={(e) => {
+                setModelPinned(true)
+                setSelectedModel(e.target.value)
+              }}
+              data-testid="model-select"
+            >
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>{model.id}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Chat */}
@@ -2611,10 +2798,10 @@ export const App = () => {
 
         {/* Attachments */}
         {attachedPaths.length > 0 && (
-          <div className="attach-bar">
+          <div className={`attach-bar${pipMode ? ' attach-bar--pip' : ''}`}>
             {attachedPaths.map((p, i) => (
               <span key={i} className="attach-chip" style={{ animationDelay: `${i * 0.06}s` }}>
-                {p.split('/').pop()}
+                {p.split(/[\\/]/).pop()}
                 <span className="attach-chip-x" onClick={() => removeAttachment(i)}>x</span>
               </span>
             ))}
