@@ -122,7 +122,8 @@ export const toOllamaModelInfo = (name: string, sizeBytes = 0): ModelInfo => ({
 export const discoverOllamaModels = (): ModelInfo[] => {
   const raw = execFileSync('ollama', ['list'], {
     encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: process.platform === 'win32'
   })
 
   const entries = sortOllamaListEntriesFastFirst(parseOllamaListEntries(raw))

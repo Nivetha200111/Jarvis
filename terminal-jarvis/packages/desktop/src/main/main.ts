@@ -398,7 +398,7 @@ const isOllamaInstalled = (): boolean => {
   }
 
   try {
-    execFileSync('ollama', ['--version'], { stdio: 'pipe' })
+    execFileSync('ollama', ['--version'], { stdio: 'pipe', shell: process.platform === 'win32' })
     return true
   } catch {
     return false
@@ -423,7 +423,7 @@ const isOllamaResponsive = (): boolean => {
   }
 
   try {
-    execFileSync('ollama', ['list'], { stdio: 'pipe' })
+    execFileSync('ollama', ['list'], { stdio: 'pipe', shell: process.platform === 'win32' })
     return true
   } catch {
     return false
@@ -693,7 +693,8 @@ const runOllamaModelPull = async (
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn('ollama', ['pull', modelId], {
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: process.platform === 'win32'
       })
 
       const handleChunk = (chunk: Buffer): void => {
@@ -1128,6 +1129,12 @@ const getActiveWindowInfo = (): string => {
   try {
     if (process.platform === 'linux') {
       return execSync('xdotool getactivewindow getwindowname 2>/dev/null || echo "unknown"', { encoding: 'utf8', timeout: 3000 }).trim()
+    }
+    if (process.platform === 'win32') {
+      return execFileSync('powershell.exe', [
+        '-NoProfile', '-Command',
+        'Add-Type -MemberDefinition \'[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);\' -Name FG -Namespace W -PassThru | Out-Null; $h = [W.FG]::GetForegroundWindow(); $s = New-Object System.Text.StringBuilder 256; [void][W.FG]::GetWindowText($h, $s, 256); $s.ToString()'
+      ], { encoding: 'utf8', timeout: 5000 }).trim() || 'unknown'
     }
     return 'unknown'
   } catch {

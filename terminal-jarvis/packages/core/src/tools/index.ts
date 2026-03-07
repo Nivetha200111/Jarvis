@@ -476,10 +476,16 @@ export const executeTool = async (
       }
       case 'extract_zip': {
         const archivePath = String(args.archive_path ?? '')
-        const destination = String(args.destination ?? '/tmp/extracted')
+        const destination = String(args.destination ?? (process.platform === 'win32' ? process.env.TEMP + '\\extracted' : '/tmp/extracted'))
         mkdirSync(destination, { recursive: true })
         if (archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
           execFileSync('tar', ['-xzf', archivePath, '-C', destination], {
+            encoding: 'utf8',
+            timeout: 30_000,
+            shell: process.platform === 'win32'
+          })
+        } else if (process.platform === 'win32') {
+          execSync(`powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destination.replace(/'/g, "''")}'\"`, {
             encoding: 'utf8',
             timeout: 30_000
           })

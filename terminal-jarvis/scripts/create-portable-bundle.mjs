@@ -224,7 +224,7 @@ if defined VISION_MODEL (
 )
 
 :launch
-endlocal
+endlocal & set "JARVIS_ENGINE=auto" & set "ELECTRON_RUN_AS_NODE="
 "%~dp0electron\\electron.exe" "%~dp0app\\main.cjs"
 `
   await writeFile(join(bundlePath, 'run-jarvis.bat'), batch, 'utf8')
