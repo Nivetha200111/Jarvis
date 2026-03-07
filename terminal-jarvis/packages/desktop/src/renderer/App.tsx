@@ -2426,6 +2426,7 @@ export const App = () => {
               className={`tb-btn ${showOnboarding ? 'tb-btn--active' : ''}`}
               onClick={() => { void handleOpenModelHub() }}
               title="Open model setup"
+              data-testid="open-model-hub"
             >
               Models
             </button>
@@ -2511,7 +2512,7 @@ export const App = () => {
       </main>
 
       {showOnboarding && (
-        <div className="onboarding-overlay">
+        <div className="onboarding-overlay" data-testid="onboarding-overlay">
           <div className="onboarding-panel">
             <div className="onboarding-header">
               <div>
@@ -2565,18 +2566,20 @@ export const App = () => {
                     value={modelCatalogQuery}
                     onChange={(event) => setModelCatalogQuery(event.target.value)}
                     placeholder="Search models, families, sizes..."
+                    data-testid="onboarding-model-search"
                   />
                   <button
                     type="button"
                     className="onboarding-action"
                     onClick={() => { void reloadOnboardingCatalog() }}
                     disabled={catalogLoading || installingExtraModels}
+                    data-testid="onboarding-refresh"
                   >
                     {catalogLoading ? 'Refreshing...' : 'Refresh'}
                   </button>
                 </div>
 
-                <div className="onboarding-model-list">
+                <div className="onboarding-model-list" data-testid="onboarding-model-list">
                   {optionalCatalogModels.map((model) => {
                     const checked = selectedExtraModels.includes(model.id)
                     const installing = installingExtraModels && checked && !model.installed
@@ -2585,6 +2588,8 @@ export const App = () => {
                       <label
                         key={model.id}
                         className={`onboarding-model-card${checked ? ' onboarding-model-card--selected' : ''}${model.installed ? ' onboarding-model-card--installed' : ''}`}
+                        data-testid="onboarding-model-card"
+                        data-model-id={model.id}
                       >
                         <div className="onboarding-model-top">
                           <input
@@ -2592,6 +2597,7 @@ export const App = () => {
                             checked={checked || model.installed}
                             onChange={() => toggleExtraModelSelection(model.id)}
                             disabled={installingExtraModels || model.installed}
+                            data-testid="onboarding-model-toggle"
                           />
                           <div className="onboarding-model-main">
                             <div className="onboarding-model-title-row">
@@ -2645,6 +2651,7 @@ export const App = () => {
                   className="onboarding-secondary"
                   onClick={() => { void completeOnboarding() }}
                   disabled={installingExtraModels}
+                  data-testid="onboarding-continue"
                 >
                   {onboardingState.complete ? 'Close' : 'Continue with baseline'}
                 </button>
@@ -2657,6 +2664,7 @@ export const App = () => {
                     || (!ollamaStatus.installed && pendingOptionalInstallCount > 0)
                     || (!ollamaStatus.running && pendingOptionalInstallCount > 0)
                   }
+                  data-testid="onboarding-install-selected"
                 >
                   {installingExtraModels
                     ? 'Pulling models...'

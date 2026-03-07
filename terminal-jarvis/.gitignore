@@ -9,6 +9,7 @@ test-results
 packages/*/dist
 packages/*/dist-types
 .release
+release-builds
 
 # Electron
 packages/desktop/.electron

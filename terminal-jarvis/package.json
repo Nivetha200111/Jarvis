@@ -16,6 +16,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "vitest run --config ./vitest.config.ts",
     "test:e2e": "playwright test",
+    "test:e2e:desktop": "playwright test -c ./playwright.desktop.config.ts",
     "dev:cli": "npm run dev --workspace @jarvis/cli",
     "dev:api": "npm run dev --workspace @jarvis/api",
     "dev:desktop": "npm run dev --workspace @jarvis/desktop",

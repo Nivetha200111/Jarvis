@@ -102,6 +102,12 @@ jobs:
       - name: Desktop smoke
         working-directory: terminal-jarvis
         run: xvfb-run -a npm run smoke:desktop
+      - name: Website E2E
+        working-directory: terminal-jarvis
+        run: npm run test:e2e
+      - name: Desktop onboarding E2E
+        working-directory: terminal-jarvis
+        run: xvfb-run -a npm run test:e2e:desktop
 
   windows-validate:
     runs-on: windows-latest

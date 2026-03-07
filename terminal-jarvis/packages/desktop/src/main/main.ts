@@ -77,6 +77,7 @@ const BASELINE_MODEL_IDS = [
 const BASELINE_MODEL_SET = new Set<string>(BASELINE_MODEL_IDS)
 const OLLAMA_MODEL_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])?(?::[a-z0-9._-]+)?$/i
 const activeModelPulls = new Set<string>()
+const DESKTOP_E2E_MODE = process.env.JARVIS_DESKTOP_E2E === '1'
 
 interface GoogleTokenState {
   accessToken: string
@@ -164,6 +165,18 @@ interface OllamaPullProgressEvent {
   message: string
 }
 
+interface DesktopE2EConfig {
+  ollamaStatus?: Partial<OllamaStatusResponse>
+  catalog?: {
+    models?: Array<Partial<OllamaCatalogModel> & { id: string }>
+    installedModelIds?: string[]
+    baselineModelIds?: string[]
+    source?: OllamaCatalogResponse['source']
+    warning?: string
+  }
+  pullScenarios?: Record<string, string[]>
+}
+
 const toBase64Url = (value: Buffer): string =>
   value
     .toString('base64')
@@ -175,6 +188,79 @@ const createPkcePair = (): { verifier: string; challenge: string } => {
   const verifier = toBase64Url(randomBytes(48))
   const challenge = toBase64Url(createHash('sha256').update(verifier).digest())
   return { verifier, challenge }
+}
+
+const parseJsonEnv = <T>(name: string): T | null => {
+  const raw = process.env[name]?.trim()
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return null
+  }
+}
+
+const desktopE2EConfig = DESKTOP_E2E_MODE
+  ? parseJsonEnv<DesktopE2EConfig>('JARVIS_DESKTOP_E2E_CONFIG')
+  : null
+const desktopE2EInstalledModelIds = new Set<string>()
+const desktopE2ECatalogModels = new Map<string, OllamaCatalogModel>()
+
+const toDesktopE2ECatalogModel = (
+  input: Partial<OllamaCatalogModel> & { id: string },
+  installedIds: Set<string>,
+  baselineIds: Set<string>
+): OllamaCatalogModel => ({
+  id: input.id,
+  name: input.name?.trim() || input.id,
+  sizeBytes: typeof input.sizeBytes === 'number' ? input.sizeBytes : 0,
+  modifiedAt: typeof input.modifiedAt === 'string' ? input.modifiedAt : null,
+  family: input.family?.trim() || 'general',
+  parameterSize: input.parameterSize?.trim() || '',
+  quantization: input.quantization?.trim() || '',
+  installed: input.installed === true || installedIds.has(input.id),
+  baseline: input.baseline === true || baselineIds.has(input.id)
+})
+
+if (DESKTOP_E2E_MODE) {
+  const configuredBaselineIds = desktopE2EConfig?.catalog?.baselineModelIds
+    ? sanitizeModelIds(desktopE2EConfig.catalog.baselineModelIds)
+    : [...BASELINE_MODEL_SET]
+  const baselineIds = new Set<string>(configuredBaselineIds)
+  const configuredInstalledIds = desktopE2EConfig?.catalog?.installedModelIds
+    ? sanitizeModelIds(desktopE2EConfig.catalog.installedModelIds)
+    : configuredBaselineIds
+
+  for (const modelId of configuredInstalledIds) {
+    desktopE2EInstalledModelIds.add(modelId)
+  }
+
+  const configuredModels = desktopE2EConfig?.catalog?.models ?? []
+  for (const model of configuredModels) {
+    desktopE2ECatalogModels.set(
+      model.id,
+      toDesktopE2ECatalogModel(model, desktopE2EInstalledModelIds, baselineIds)
+    )
+  }
+
+  for (const modelId of baselineIds) {
+    if (!desktopE2ECatalogModels.has(modelId)) {
+      desktopE2ECatalogModels.set(modelId, {
+        id: modelId,
+        name: modelId,
+        sizeBytes: 0,
+        modifiedAt: null,
+        family: modelId.includes('embed') ? 'embedding' : modelId.includes('vl') || modelId.includes('llava') ? 'vision' : 'chat',
+        parameterSize: '',
+        quantization: '',
+        installed: desktopE2EInstalledModelIds.has(modelId),
+        baseline: true
+      })
+    }
+  }
 }
 
 const loadGoogleTokenState = (): GoogleTokenState | null => {
@@ -225,7 +311,7 @@ const defaultOnboardingState = (): OnboardingState => ({
   completedAt: null
 })
 
-const sanitizeModelIds = (value: unknown): string[] => {
+function sanitizeModelIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return []
   }
@@ -255,6 +341,26 @@ const loadOnboardingState = (): OnboardingState => {
   }
 }
 
+const getDesktopE2EInstalledModels = (): ModelInfo[] => {
+  if (!DESKTOP_E2E_MODE) {
+    return []
+  }
+
+  return [...desktopE2EInstalledModelIds]
+    .map((modelId) => {
+      const catalogModel = desktopE2ECatalogModels.get(modelId)
+      return {
+        id: modelId,
+        name: catalogModel?.name ?? modelId,
+        path: `ollama://${modelId}`,
+        sizeBytes: catalogModel?.sizeBytes ?? 0,
+        quantization: catalogModel?.quantization ?? '',
+        contextLength: 32_768
+      } satisfies ModelInfo
+    })
+    .sort((left, right) => left.id.localeCompare(right.id))
+}
+
 const saveOnboardingState = (nextState: Partial<OnboardingState>): OnboardingState => {
   const current = loadOnboardingState()
   const merged: OnboardingState = {
@@ -274,6 +380,10 @@ const saveOnboardingState = (nextState: Partial<OnboardingState>): OnboardingSta
 }
 
 const isOllamaInstalled = (): boolean => {
+  if (DESKTOP_E2E_MODE) {
+    return desktopE2EConfig?.ollamaStatus?.installed ?? true
+  }
+
   try {
     execFileSync('ollama', ['--version'], { stdio: 'pipe' })
     return true
@@ -283,6 +393,10 @@ const isOllamaInstalled = (): boolean => {
 }
 
 const getInstalledOllamaModels = (): ModelInfo[] => {
+  if (DESKTOP_E2E_MODE) {
+    return getDesktopE2EInstalledModels()
+  }
+
   try {
     return discoverOllamaModels()
   } catch {
@@ -291,6 +405,10 @@ const getInstalledOllamaModels = (): ModelInfo[] => {
 }
 
 const isOllamaResponsive = (): boolean => {
+  if (DESKTOP_E2E_MODE) {
+    return desktopE2EConfig?.ollamaStatus?.running ?? true
+  }
+
   try {
     execFileSync('ollama', ['list'], { stdio: 'pipe' })
     return true
@@ -300,6 +418,16 @@ const isOllamaResponsive = (): boolean => {
 }
 
 const getOllamaStatus = (): OllamaStatusResponse => {
+  if (DESKTOP_E2E_MODE) {
+    const provider = desktopE2EConfig?.ollamaStatus?.provider ?? 'ollama'
+    return {
+      installed: desktopE2EConfig?.ollamaStatus?.installed ?? true,
+      running: desktopE2EConfig?.ollamaStatus?.running ?? true,
+      provider,
+      warning: desktopE2EConfig?.ollamaStatus?.warning
+    }
+  }
+
   const installed = isOllamaInstalled()
   const installedModels = installed ? getInstalledOllamaModels() : []
   const running = installed && isOllamaResponsive()
@@ -372,6 +500,27 @@ const sortCatalogModels = (models: OllamaCatalogModel[]): OllamaCatalogModel[] =
   })
 
 const getOllamaCatalog = async (): Promise<OllamaCatalogResponse> => {
+  if (DESKTOP_E2E_MODE) {
+    const source = desktopE2EConfig?.catalog?.source ?? 'remote'
+    const baselineModelIds = desktopE2EConfig?.catalog?.baselineModelIds
+      ? sanitizeModelIds(desktopE2EConfig.catalog.baselineModelIds)
+      : [...BASELINE_MODEL_SET]
+
+    const models = [...desktopE2ECatalogModels.values()].map((model) => ({
+      ...model,
+      installed: desktopE2EInstalledModelIds.has(model.id),
+      baseline: model.baseline || baselineModelIds.includes(model.id)
+    }))
+
+    return {
+      models: sortCatalogModels(models),
+      installedModelIds: [...desktopE2EInstalledModelIds].sort((left, right) => left.localeCompare(right)),
+      baselineModelIds,
+      source,
+      warning: desktopE2EConfig?.catalog?.warning
+    }
+  }
+
   const installedModels = getInstalledOllamaModels()
   const installedIds = new Set(installedModels.map((model) => model.id))
 
@@ -449,6 +598,46 @@ const runOllamaModelPull = async (
   requestId: string,
   modelId: string
 ): Promise<void> => {
+  if (DESKTOP_E2E_MODE) {
+    const messages = desktopE2EConfig?.pullScenarios?.[modelId] ?? [
+      `Resolving ${modelId}...`,
+      `Pulling ${modelId} layers...`,
+      `${modelId} verified.`
+    ]
+
+    for (const message of messages) {
+      emitModelPullEvent(sender, {
+        requestId,
+        modelId,
+        type: 'progress',
+        message
+      })
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    desktopE2EInstalledModelIds.add(modelId)
+    const existing = desktopE2ECatalogModels.get(modelId)
+    desktopE2ECatalogModels.set(modelId, {
+      id: modelId,
+      name: existing?.name ?? modelId,
+      sizeBytes: existing?.sizeBytes ?? 0,
+      modifiedAt: existing?.modifiedAt ?? new Date().toISOString(),
+      family: existing?.family ?? 'general',
+      parameterSize: existing?.parameterSize ?? '',
+      quantization: existing?.quantization ?? '',
+      installed: true,
+      baseline: existing?.baseline ?? BASELINE_MODEL_SET.has(modelId)
+    })
+
+    emitModelPullEvent(sender, {
+      requestId,
+      modelId,
+      type: 'done',
+      message: `${modelId} ready`
+    })
+    return
+  }
+
   if (!OLLAMA_MODEL_ID_PATTERN.test(modelId)) {
     emitModelPullEvent(sender, {
       requestId,
@@ -1028,7 +1217,7 @@ const registerIpc = (): void => {
   ipcMain.handle('ollama:status', async () => getOllamaStatus())
   ipcMain.handle('ollama:catalog', async () => getOllamaCatalog())
   ipcMain.handle('chat:send', async (_event, request) => sendChat(services, request))
-  ipcMain.handle('model:list', async () => listModels(services))
+  ipcMain.handle('model:list', async () => DESKTOP_E2E_MODE ? getInstalledOllamaModels() : listModels(services))
   ipcMain.handle('health:get', async () => getHealth(services))
   ipcMain.handle('permissions:get', async () => getToolPermissions(services))
   ipcMain.handle('audit:recent', async (_event, payload?: { limit?: number }) =>
@@ -1198,29 +1387,37 @@ app.whenReady().then(async () => {
   }
 
   await createWindow()
-  createTray()
+  if (!DESKTOP_E2E_MODE) {
+    createTray()
+  }
 
   // Global hotkey: Ctrl+Shift+J toggles window
-  globalShortcut.register('CommandOrControl+Shift+J', () => {
-    if (!mainWindow) return
-    if (mainWindow.isVisible() && mainWindow.isFocused()) {
-      mainWindow.hide()
-    } else {
-      mainWindow.show()
-      mainWindow.focus()
-    }
-  })
+  if (!DESKTOP_E2E_MODE) {
+    globalShortcut.register('CommandOrControl+Shift+J', () => {
+      if (!mainWindow) return
+      if (mainWindow.isVisible() && mainWindow.isFocused()) {
+        mainWindow.hide()
+      } else {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
+  }
 
   // Ctrl+Shift+P toggles PiP
-  globalShortcut.register('CommandOrControl+Shift+P', () => {
-    togglePip()
-  })
+  if (!DESKTOP_E2E_MODE) {
+    globalShortcut.register('CommandOrControl+Shift+P', () => {
+      togglePip()
+    })
+  }
 
-  app.on('activate', async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createWindow()
-    }
-  })
+  if (!DESKTOP_E2E_MODE) {
+    app.on('activate', async () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        await createWindow()
+      }
+    })
+  }
 })
 
 app.on('will-quit', () => {
@@ -1228,7 +1425,12 @@ app.on('will-quit', () => {
 })
 
 app.on('window-all-closed', () => {
+  if (DESKTOP_E2E_MODE) {
+    app.quit()
+    return
+  }
+
   if (process.platform !== 'darwin') {
-    // Don't quit — keep tray alive
+    // Keep tray alive in normal desktop mode.
   }
 })
