@@ -79,6 +79,9 @@ const desktopE2EConfig = {
 test('desktop onboarding installs selected extra models from the live catalog', async () => {
   const homeDir = mkdtempSync(join(tmpdir(), 'jarvis-desktop-e2e-'))
   mkdirSync(screenshotDir, { recursive: true })
+  const launchArgs = process.platform === 'linux'
+    ? ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', desktopMain]
+    : [desktopMain]
   const env = {
     ...process.env,
     HOME: homeDir,
@@ -91,7 +94,7 @@ test('desktop onboarding installs selected extra models from the live catalog', 
 
   const electronApp = await electron.launch({
     executablePath: electronBinary,
-    args: [desktopMain],
+    args: launchArgs,
     cwd: resolve(repoRoot, 'packages/desktop'),
     env
   })
