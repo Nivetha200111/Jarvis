@@ -485,7 +485,7 @@ export const executeTool = async (
             shell: process.platform === 'win32'
           })
         } else if (process.platform === 'win32') {
-          execSync(`powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destination.replace(/'/g, "''")}'\"`, {
+          execSync(`powershell.exe -NoProfile -Command "Expand-Archive -Force -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destination.replace(/'/g, "''")}'"`, {
             encoding: 'utf8',
             timeout: 30_000
           })

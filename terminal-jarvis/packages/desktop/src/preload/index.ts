@@ -33,6 +33,12 @@ export interface LiveScreenFrame {
   activeWindow: string
 }
 
+export interface ScreenOcrResult {
+  text: string
+  available: boolean
+  warning?: string
+}
+
 export interface GoogleCalendarImportResult {
   imported: number
   total: number
@@ -124,12 +130,15 @@ export interface PreloadApi {
   // Window controls
   togglePip(): Promise<boolean>
   isPip(): Promise<boolean>
+  togglePin(): Promise<boolean>
+  isAlwaysOnTop(): Promise<boolean>
   minimize(): Promise<void>
   closeWindow(): Promise<void>
   onPipChanged(callback: (isPip: boolean) => void): () => void
   // Screen & system
   captureScreen(): Promise<ScreenCapture>
   captureScreenFrame(): Promise<LiveScreenFrame>
+  extractScreenText(imageBase64: string): Promise<ScreenOcrResult>
   getActiveWindow(): Promise<string>
   getSystemInfo(): Promise<Record<string, string>>
 }
@@ -214,6 +223,8 @@ const api: PreloadApi = {
   // Window
   togglePip: () => ipcRenderer.invoke('window:toggle-pip'),
   isPip: () => ipcRenderer.invoke('window:is-pip'),
+  togglePin: () => ipcRenderer.invoke('window:toggle-pin'),
+  isAlwaysOnTop: () => ipcRenderer.invoke('window:is-always-on-top'),
   minimize: () => ipcRenderer.invoke('window:minimize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   onPipChanged: (callback) => {
@@ -224,6 +235,7 @@ const api: PreloadApi = {
   // Screen & system
   captureScreen: () => ipcRenderer.invoke('screen:capture'),
   captureScreenFrame: () => ipcRenderer.invoke('screen:capture-frame'),
+  extractScreenText: (imageBase64) => ipcRenderer.invoke('screen:ocr', { imageBase64 }),
   getActiveWindow: () => ipcRenderer.invoke('screen:active-window'),
   getSystemInfo: () => ipcRenderer.invoke('system:info')
 }

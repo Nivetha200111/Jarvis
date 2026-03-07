@@ -28,6 +28,14 @@ const models: ModelInfo[] = [
     contextLength: 0
   },
   {
+    id: 'moondream:latest',
+    name: 'moondream:latest',
+    path: 'ollama://moondream:latest',
+    sizeBytes: 900_000_000,
+    quantization: 'unknown',
+    contextLength: 0
+  },
+  {
     id: 'nomic-embed-text',
     name: 'nomic-embed-text',
     path: 'ollama://nomic-embed-text',

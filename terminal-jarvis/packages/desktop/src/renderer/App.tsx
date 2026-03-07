@@ -13,7 +13,8 @@ import type {
   OllamaCatalogResponse,
   OllamaModelPullEvent,
   OllamaStatus,
-  OnboardingState
+  OnboardingState,
+  ScreenOcrResult
 } from '../preload/index.js'
 import { ChatView, type ChatEntry } from './components/chat-view.js'
 
@@ -32,13 +33,16 @@ const MATCH_CONTEXT_NOTE_LIMIT = 3
 const RAG_CONTEXT_CHUNK_LIMIT = 5
 const TOKEN_FLUSH_INTERVAL_MS = 40
 const STREAM_STALL_TIMEOUT_MS = 90_000
+const LIVE_SCREEN_STREAM_STALL_TIMEOUT_MS = 180_000
 const VAULT_INDEX_NOTE_LIMIT = 2_000
 const VAULT_INDEX_IDLE_DELAY_MS = 120
 const VAULT_INDEX_TEXT_MAX_CHARS = 36_000
 const LIVE_SCREEN_REFRESH_MS = 1_800
-const LIVE_SCREEN_MAX_WIDTH = 1024
-const LIVE_SCREEN_MAX_HEIGHT = 576
+const LIVE_SCREEN_MAX_WIDTH = 1440
+const LIVE_SCREEN_MAX_HEIGHT = 810
+const LIVE_SCREEN_OCR_MAX_CHARS = 5_000
 const VISION_MODEL_PATTERN = /(llava|vision|moondream|bakllava|qwen2\.5(?:-|:)?vl|llama3\.2-vision)/i
+const SLOW_VISION_MODEL_PATTERN = /(moondream|qwen2\.5(?:-|:)?vl)/i
 const CALENDAR_CONTEXT_EVENT_LIMIT = 6
 const CALENDAR_CONTEXT_HORIZON_DAYS = 14
 const SMALL_VAULT_NOTE_LIMIT = 24
@@ -260,6 +264,22 @@ const trimRagSourceLabel = (source: string): string =>
   source
     .replace(/^vault:/, '')
     .replace(/@\d+$/u, '')
+
+const shouldUseLiveScreenImage = (
+  modelId: string,
+  supportsVision: boolean,
+  extractedText: string
+): boolean => {
+  if (!supportsVision) {
+    return false
+  }
+
+  if (SLOW_VISION_MODEL_PATTERN.test(modelId)) {
+    return false
+  }
+
+  return extractedText.trim().length < 120
+}
 
 const toRagExcerpt = (text: string, maxChars = 800): string => {
   const normalized = text.replace(/\s+/g, ' ').trim()
@@ -856,6 +876,18 @@ const CSS = `
     transform: scale(0.88);
     transition-duration: 0.08s;
   }
+  .win-ctrl--pin {
+    color: rgba(251, 191, 36, 0.4);
+  }
+  .win-ctrl--pin:hover {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.1);
+  }
+  .win-ctrl--pin-active {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.14);
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.2);
+  }
   .win-ctrl--pip {
     color: rgba(168, 85, 247, 0.5);
   }
@@ -1247,6 +1279,7 @@ export const App = () => {
   const [liveScreenFrame, setLiveScreenFrame] = useState<LiveScreenFrame | null>(null)
   const [liveScreenError, setLiveScreenError] = useState<string | null>(null)
   const [pipMode, setPipMode] = useState(false)
+  const [pinned, setPinned] = useState(false)
   const [toolPermissions, setToolPermissions] = useState<ToolPermissionSet | null>(null)
   const statusRef = useRef(status)
   const busyRef = useRef(busy)
@@ -1297,6 +1330,7 @@ export const App = () => {
 
   useEffect(() => {
     window.jarvis.isPip().then(setPipMode).catch(() => {})
+    window.jarvis.isAlwaysOnTop().then(setPinned).catch(() => {})
     const unsub = window.jarvis.onPipChanged(setPipMode)
     return unsub
   }, [])
@@ -1402,7 +1436,7 @@ export const App = () => {
     }
 
     context.drawImage(video, 0, 0, fitted.width, fitted.height)
-    const imageBase64 = canvas.toDataURL('image/jpeg', 0.72).replace(/^data:image\/jpeg;base64,/, '')
+    const imageBase64 = canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '')
     const activeWindow = await window.jarvis.getActiveWindow().catch(() => 'unknown')
 
     return {
@@ -1633,8 +1667,8 @@ export const App = () => {
     () => VISION_MODEL_PATTERN.test(selectedModel),
     [selectedModel]
   )
-  const recommendedVisionModel = useMemo(
-    () => models.find((model) => VISION_MODEL_PATTERN.test(model.id))?.id ?? null,
+  const recommendedFastModel = useMemo(
+    () => pickRecommendedRendererModelId(models, 'fast') ?? null,
     [models]
   )
   const baselineCatalogModels = useMemo(
@@ -1670,7 +1704,7 @@ export const App = () => {
       return
     }
 
-    const targetUseCase = liveScreenMode ? 'vision' : chatMode === 'agent' ? 'agent' : 'fast'
+    const targetUseCase = chatMode === 'agent' ? 'agent' : 'fast'
     const recommended = pickRecommendedRendererModelId(models, targetUseCase)
 
     if (recommended && recommended !== selectedModel) {
@@ -1923,7 +1957,7 @@ export const App = () => {
     teardownStream()
   }, [flushImmediately, setStatusSafe, teardownStream])
 
-  const touchStreamWatchdog = useCallback((): void => {
+  const touchStreamWatchdog = useCallback((timeoutMs = STREAM_STALL_TIMEOUT_MS): void => {
     if (streamWatchdogRef.current !== null) {
       clearTimeout(streamWatchdogRef.current)
       streamWatchdogRef.current = null
@@ -1938,7 +1972,7 @@ export const App = () => {
         }
       ])
       finalizeStream('ready')
-    }, STREAM_STALL_TIMEOUT_MS)
+    }, timeoutMs)
   }, [finalizeStream])
 
   const handleAttachFiles = async (): Promise<void> => {
@@ -2092,7 +2126,7 @@ export const App = () => {
       if (current && items.some((model) => model.id === current)) {
         return current
       }
-      const useCase = liveScreenMode ? 'vision' : chatMode === 'agent' ? 'agent' : 'fast'
+      const useCase = chatMode === 'agent' ? 'agent' : 'fast'
       return pickRecommendedRendererModelId(items, useCase) ?? items[0]?.id ?? ''
     })
   }
@@ -2208,6 +2242,11 @@ export const App = () => {
     setPipMode(next)
   }
 
+  const handleTogglePin = async (): Promise<void> => {
+    const next = await window.jarvis.togglePin()
+    setPinned(next)
+  }
+
   const handleScreenCapture = async (): Promise<void> => {
     try {
       const capture = await window.jarvis.captureScreen()
@@ -2228,20 +2267,21 @@ export const App = () => {
       return
     }
 
-    if (!selectedModelSupportsVision) {
-      if (recommendedVisionModel) {
-        setSelectedModel(recommendedVisionModel)
-        setEntries((prev) => [
-          ...prev,
-          {
-            type: 'thinking',
-            content: `Live screen: switched model to ${recommendedVisionModel} for vision support.`
-          }
-        ])
-      } else {
-        pushErrorEntry('Live screen mode needs a vision model (for example: llava or qwen2.5-vl).')
-        return
-      }
+    const shouldSwitchToRecommendedFastModel = Boolean(
+      recommendedFastModel
+      && recommendedFastModel !== selectedModel
+      && (selectedModelSupportsVision || !selectedModel)
+    )
+
+    if (shouldSwitchToRecommendedFastModel && recommendedFastModel) {
+      setSelectedModel(recommendedFastModel)
+      setEntries((prev) => [
+        ...prev,
+        {
+          type: 'thinking',
+          content: `Live screen: using ${recommendedFastModel} with local screen text extraction for faster responses.`
+        }
+      ])
     }
 
     const canUseRendererLiveScreen = !navigator.webdriver
@@ -2309,8 +2349,11 @@ export const App = () => {
     let contextMode: 'none' | 'keyword' | 'rag' | 'broad' = 'none'
     let contextPaths: string[] = []
     let screenFrameAttached = false
+    let screenImageAttached = false
     let attachedFrame: LiveScreenFrame | null = null
     let screenFrameDetails = ''
+    let screenTextExtracted = ''
+    let screenTextWarning: string | null = null
     const forceAgentMode = attachedPaths.length > 0
     const useAgentMode = chatMode === 'agent' || forceAgentMode
     const priorConversation = conversation
@@ -2324,7 +2367,7 @@ export const App = () => {
       contextPaths = enriched.notePaths
     }
 
-    if (useCalendarContext && !useAgentMode) {
+    if (useCalendarContext && !useAgentMode && !liveScreenMode) {
       if (!vaultStatus.connected || !useVaultContext) {
         setStatusSafe('retrieving schedule...')
       }
@@ -2333,12 +2376,22 @@ export const App = () => {
       calendarMatches = enrichedSchedule.eventCount
     }
 
-    if (liveScreenMode && liveScreenFrame && selectedModelSupportsVision) {
+    if (liveScreenMode && liveScreenFrame) {
+      setStatusSafe('reading screen...')
       const activeWindow = liveScreenFrame.activeWindow || 'unknown'
       screenFrameDetails = `window: ${activeWindow} @ ${liveScreenFrame.timestamp}`
+      const ocrResult: ScreenOcrResult | null = await window.jarvis.extractScreenText(liveScreenFrame.imageBase64).catch(() => null)
+      screenTextExtracted = ocrResult?.text?.trim() ?? ''
+      screenTextWarning = ocrResult?.warning?.trim() || null
       content = `${content}\n\n[Live screen]\nActive window: ${activeWindow}\nCaptured at: ${liveScreenFrame.timestamp}`
+      if (screenTextExtracted) {
+        content = `${content}\n\n[Visible screen text]\n${screenTextExtracted.slice(0, LIVE_SCREEN_OCR_MAX_CHARS)}`
+      }
       screenFrameAttached = true
-      attachedFrame = liveScreenFrame
+      if (shouldUseLiveScreenImage(selectedModel, selectedModelSupportsVision, screenTextExtracted)) {
+        attachedFrame = liveScreenFrame
+        screenImageAttached = true
+      }
     }
 
     if (attachedPaths.length > 0) {
@@ -2370,7 +2423,15 @@ export const App = () => {
       if (screenFrameAttached) {
         next.push({
           type: 'thinking',
-          content: `Live screen frame attached (${screenFrameDetails}).`
+          content: screenTextExtracted
+            ? `Live screen context ready (${screenFrameDetails}; local text extracted).`
+            : `Live screen context ready (${screenFrameDetails}).`
+        })
+      }
+      if (screenTextWarning && !screenTextExtracted) {
+        next.push({
+          type: 'thinking',
+          content: `Live screen note: ${screenTextWarning}`
         })
       }
       return next
@@ -2393,7 +2454,10 @@ export const App = () => {
     }
 
     if (screenFrameAttached) {
-      void recordAudit('context', 'renderer_live_screen', `Attached a live screen frame from ${screenFrameDetails}.`)
+      void recordAudit('context', 'renderer_live_screen', `Attached live screen context from ${screenFrameDetails}.`, {
+        imageAttached: screenImageAttached,
+        extractedTextChars: screenTextExtracted.length
+      })
     }
 
     const historyUserMessage: { role: 'user'; content: string } = {
@@ -2404,18 +2468,19 @@ export const App = () => {
       role: 'user',
       content
     }
-    if (attachedFrame) {
+    if (attachedFrame && screenImageAttached) {
       requestUserMessage.images = [attachedFrame.imageBase64]
     }
     const messages = [...priorConversation, requestUserMessage]
     let conversationCommitted = false
+    const streamWatchdogTimeoutMs = liveScreenMode ? LIVE_SCREEN_STREAM_STALL_TIMEOUT_MS : STREAM_STALL_TIMEOUT_MS
 
     if (!useAgentMode) {
-      touchStreamWatchdog()
+      touchStreamWatchdog(streamWatchdogTimeoutMs)
       streamUnsubscribeRef.current = window.jarvis.chatStream(
         { model: selectedModel, messages, stream: true, max_tokens: 192 },
         (event) => {
-          touchStreamWatchdog()
+          touchStreamWatchdog(streamWatchdogTimeoutMs)
           switch (event.type) {
             case 'token':
               setStatusSafe('generating...')
@@ -2442,12 +2507,12 @@ export const App = () => {
       return
     }
 
-    touchStreamWatchdog()
+    touchStreamWatchdog(streamWatchdogTimeoutMs)
     streamUnsubscribeRef.current = window.jarvis.agentChat(
       selectedModel,
       messages,
       (event: AgentEvent) => {
-        touchStreamWatchdog()
+        touchStreamWatchdog(streamWatchdogTimeoutMs)
         switch (event.type) {
           case 'audit':
             setEntries((prev) => [...prev, { type: 'thinking', content: `${event.title}: ${event.content}` }])
@@ -2560,11 +2625,23 @@ export const App = () => {
             {queuedPrompts.length > 0 && (
               <span className="queue-badge">+{queuedPrompts.length} queued</span>
             )}
+            {!pipMode && (
+              <button
+                type="button"
+                className={`win-ctrl win-ctrl--pin${pinned ? ' win-ctrl--pin-active' : ''}`}
+                onClick={handleTogglePin}
+                title={pinned ? 'Unpin from front' : 'Pin to front'}
+                data-testid="pin-toggle"
+              >
+                {pinned ? '✦' : '✧'}
+              </button>
+            )}
             <button
               type="button"
               className={`win-ctrl win-ctrl--pip${pipMode ? ' win-ctrl--pip-active' : ''}`}
               onClick={handleTogglePip}
               title={pipMode ? 'Exit PiP' : 'PiP mode'}
+              data-testid="pip-toggle"
             >
               {pipMode ? '[]' : '..'}
             </button>

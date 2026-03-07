@@ -40,7 +40,8 @@ test('desktop main flows work across chat, queueing, vault, calendar, live scree
         timestamp: '2026-03-07T09:00:00.000Z',
         activeWindow: 'Obsidian - Tier ZERO',
         path: resolve(repoRoot, 'test-results/e2e-screen.png'),
-        imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5L2s8AAAAASUVORK5CYII='
+        imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5L2s8AAAAASUVORK5CYII=',
+        ocrText: 'Tier ZERO slide. The story ends when Ava opens the gate and steps into the light.'
       }
     }),
     extraEnv: {
@@ -78,6 +79,11 @@ test('desktop main flows work across chat, queueing, vault, calendar, live scree
     await page.getByTestId('calendar-google-sync').click()
     await expect(page.getByText(/Google calendar synced: 3\/3 events imported\./)).toBeVisible({ timeout: 10_000 })
 
+    await page.getByTestId('pin-toggle').click()
+    await expect.poll(async () => electronApp.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop() ?? false
+    )).toBe(true)
+
     const longPrompt = Array.from({ length: 160 }, (_, index) => `token${index}`).join(' ')
     await page.getByTestId('chat-input').fill(longPrompt)
     await clickSend()
@@ -89,13 +95,22 @@ test('desktop main flows work across chat, queueing, vault, calendar, live scree
     await page.getByTestId('screen-capture').click()
     await expect(page.getByText(/Screen captured: 1280x720/)).toBeVisible({ timeout: 10_000 })
 
+    await page.getByTestId('pip-toggle').click()
+    await expect.poll(async () => electronApp.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop() ?? false
+    )).toBe(true)
+    await page.getByTestId('pip-toggle').click()
+    await expect.poll(async () => electronApp.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop() ?? false
+    )).toBe(true)
+
     await page.getByTestId('live-screen-toggle').click()
-    await expect(page.getByTestId('model-select')).toHaveValue('qwen2.5vl:3b', { timeout: 10_000 })
+    await expect(page.getByTestId('model-select')).toHaveValue('qwen2.5:3b', { timeout: 10_000 })
     await expect(page.getByText(/Live screen enabled/)).toBeVisible({ timeout: 10_000 })
 
     await page.getByTestId('chat-input').fill('what is on the screen')
     await clickSend()
-    await expect(page.getByText(/Live screen frame attached/)).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(/Live screen context ready/)).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('[data-entry-type="assistant"]').last()).toContainText('what is on the screen', { timeout: 20_000 })
 
     await page.getByTestId('mode-agent').click()
@@ -113,6 +128,11 @@ test('desktop main flows work across chat, queueing, vault, calendar, live scree
 
     await page.getByTestId('audit-show').click()
     await expect(page.locator('.cv-content--thinking').filter({ hasText: /^Audit / }).first()).toBeVisible({ timeout: 10_000 })
+
+    await page.getByTestId('pin-toggle').click()
+    await expect.poll(async () => electronApp.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop() ?? false
+    )).toBe(false)
   } finally {
     await electronApp.close()
   }

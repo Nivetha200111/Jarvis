@@ -2,8 +2,8 @@ import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Notific
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { homedir, hostname, userInfo, cpus, totalmem, freemem, platform, release } from 'node:os'
+import { writeFileSync, mkdirSync, existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { homedir, hostname, userInfo, cpus, totalmem, freemem, platform, release, tmpdir } from 'node:os'
 import { execFileSync, execSync, spawn } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
 import { discoverOllamaModels, type CalendarEventInput, type ModelInfo, type SystemToolCallbacks } from '@jarvis/core'
@@ -40,6 +40,7 @@ const currentDir = __dirname
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isPip = false
+let pinnedToFront = false
 let prePipBounds: Electron.Rectangle | null = null
 let displayCaptureConfigured = false
 
@@ -66,6 +67,8 @@ const MS_PER_DAY = 86_400_000
 const OLLAMA_LIBRARY_TAGS_URL = 'https://ollama.com/api/tags'
 const OLLAMA_CATALOG_TIMEOUT_MS = 20_000
 const ONBOARDING_STATE_PATH = join(homedir(), '.jarvis', 'desktop-onboarding.json')
+const JARVIS_TESSDATA_DIR = join(homedir(), '.jarvis', 'tessdata')
+const TESSERACT_FAST_ENG_URL = 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata'
 const BASELINE_MODEL_IDS = [
   'qwen2.5:3b',
   'qwen2.5:1.5b',
@@ -160,6 +163,12 @@ interface OnboardingState {
   completedAt: string | null
 }
 
+interface ScreenOcrResult {
+  text: string
+  available: boolean
+  warning?: string
+}
+
 interface OllamaPullProgressEvent {
   requestId: string
   modelId: string
@@ -189,6 +198,7 @@ interface DesktopE2EConfig {
     timestamp?: string
     activeWindow?: string
     imageBase64?: string
+    ocrText?: string
   }
 }
 
@@ -1144,6 +1154,136 @@ const getActiveWindowInfo = (): string => {
   }
 }
 
+const normalizeScreenOcrText = (value: string): string =>
+  value
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+const parseTesseractLanguages = (value: string): string[] =>
+  value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('List of available languages'))
+
+const listTesseractLanguages = (env?: NodeJS.ProcessEnv): string[] =>
+  parseTesseractLanguages(execFileSync('tesseract', ['--list-langs'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    env: env ?? process.env
+  }))
+
+const ensureEnglishTesseractData = async (): Promise<{ env?: NodeJS.ProcessEnv; language: string }> => {
+  const installedLanguages = listTesseractLanguages()
+  if (installedLanguages.includes('eng')) {
+    return { language: 'eng' }
+  }
+
+  mkdirSync(JARVIS_TESSDATA_DIR, { recursive: true })
+  const englishDataPath = join(JARVIS_TESSDATA_DIR, 'eng.traineddata')
+  if (!existsSync(englishDataPath)) {
+    const response = await fetch(TESSERACT_FAST_ENG_URL)
+    if (!response.ok) {
+      throw new Error(`Unable to download English OCR data (${response.status}).`)
+    }
+
+    writeFileSync(englishDataPath, Buffer.from(await response.arrayBuffer()))
+  }
+
+  const env = {
+    ...process.env,
+    TESSDATA_PREFIX: `${JARVIS_TESSDATA_DIR}/`
+  }
+  const localLanguages = listTesseractLanguages(env)
+  if (!localLanguages.includes('eng')) {
+    throw new Error('English OCR data was downloaded but Tesseract could not load it.')
+  }
+
+  return {
+    env,
+    language: 'eng'
+  }
+}
+
+const extractScreenText = async (imageBase64: string): Promise<ScreenOcrResult> => {
+  if (DESKTOP_E2E_MODE) {
+    return {
+      available: true,
+      text: desktopE2EConfig?.screenCapture?.ocrText ?? ''
+    }
+  }
+
+  if (!imageBase64.trim()) {
+    return {
+      available: false,
+      text: '',
+      warning: 'No live screen frame is available yet.'
+    }
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'jarvis-ocr-'))
+  const imagePath = join(tempDir, 'live-screen.png')
+
+  try {
+    const image = nativeImage.createFromBuffer(Buffer.from(imageBase64, 'base64'))
+    const sourceSize = image.getSize()
+    const targetWidth = Math.min(2048, Math.max(sourceSize.width * 2, sourceSize.width))
+    const targetHeight = Math.min(2048, Math.max(sourceSize.height * 2, sourceSize.height))
+    const preparedImage = sourceSize.width > 0 && sourceSize.height > 0
+      ? image.resize({ width: targetWidth, height: targetHeight })
+      : image
+    writeFileSync(imagePath, preparedImage.toPNG())
+
+    const ocrRuntime = await ensureEnglishTesseractData()
+
+    const runTesseract = (pageSegmentationMode: '6' | '11'): string =>
+      execFileSync('tesseract', [
+        imagePath,
+        'stdout',
+        '--psm',
+        pageSegmentationMode,
+        '-l',
+        ocrRuntime.language
+      ], {
+        encoding: 'utf8',
+        timeout: 30_000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: ocrRuntime.env ?? process.env
+      })
+
+    let text = normalizeScreenOcrText(runTesseract('6'))
+    if (text.length < 48) {
+      const alternateText = normalizeScreenOcrText(runTesseract('11'))
+      if (alternateText.length > text.length) {
+        text = alternateText
+      }
+    }
+
+    return {
+      available: true,
+      text: text.slice(0, 8_000)
+    }
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : String(error)
+    if (warning.includes('ENOENT')) {
+      return {
+        available: false,
+        text: '',
+        warning: 'Tesseract OCR is not installed, so live screen will be text-blind.'
+      }
+    }
+
+    return {
+      available: true,
+      text: '',
+      warning
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true })
+  }
+}
+
 const getSystemInfo = (): Record<string, string> => {
   const cpu = cpus()
   return {
@@ -1236,7 +1376,60 @@ const createWindow = async (): Promise<BrowserWindow> => {
     mainWindow = null
   })
 
+  window.on('show', () => {
+    applyWindowTopState(true)
+  })
+
+  window.on('focus', () => {
+    applyWindowTopState(true)
+  })
+
+  window.on('blur', () => {
+    if (!shouldWindowStayOnTop()) {
+      return
+    }
+
+    setTimeout(() => {
+      applyWindowTopState(true)
+    }, 120)
+  })
+
+  applyWindowTopState(false)
+
   return window
+}
+
+const shouldWindowStayOnTop = (): boolean =>
+  isPip || pinnedToFront
+
+const getWindowTopLevel = (): 'screen-saver' | 'status' =>
+  process.platform === 'darwin' ? 'status' : 'screen-saver'
+
+const applyWindowTopState = (promote = true): void => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  const shouldStayOnTop = shouldWindowStayOnTop()
+  if (shouldStayOnTop) {
+    mainWindow.setAlwaysOnTop(true, getWindowTopLevel())
+    if (process.platform !== 'win32') {
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    }
+    if (promote) {
+      mainWindow.moveTop()
+    }
+  } else {
+    mainWindow.setAlwaysOnTop(false)
+    if (process.platform !== 'win32') {
+      mainWindow.setVisibleOnAllWorkspaces(false, { visibleOnFullScreen: false })
+    }
+  }
+
+  mainWindow.webContents.send('window:top-state', {
+    pinned: pinnedToFront,
+    alwaysOnTop: shouldStayOnTop
+  })
 }
 
 const togglePip = (): void => {
@@ -1247,15 +1440,12 @@ const togglePip = (): void => {
     prePipBounds = mainWindow.getBounds()
     const currentDisplay = screen.getDisplayMatching(prePipBounds)
     const { x: wx, y: wy, width: sw, height: sh } = currentDisplay.workArea
-    const pipLevel = process.platform === 'win32' ? 'screen-saver' as const : 'floating' as const
-    mainWindow.setAlwaysOnTop(true, pipLevel)
     mainWindow.setMinimumSize(280, 200)
     mainWindow.setSize(PIP_WIDTH, PIP_HEIGHT, true)
     mainWindow.setPosition(wx + sw - PIP_WIDTH - 16, wy + sh - PIP_HEIGHT - 16, true)
     mainWindow.setResizable(true)
     mainWindow.setSkipTaskbar(true)
   } else {
-    mainWindow.setAlwaysOnTop(false)
     mainWindow.setSkipTaskbar(false)
     mainWindow.setMinimumSize(380, 300)
     if (prePipBounds) {
@@ -1266,6 +1456,7 @@ const togglePip = (): void => {
       mainWindow.center()
     }
   }
+  applyWindowTopState(true)
   mainWindow.webContents.send('pip:changed', isPip)
 }
 
@@ -1416,12 +1607,19 @@ const registerIpc = (): void => {
     return isPip
   })
   ipcMain.handle('window:is-pip', async () => isPip)
+  ipcMain.handle('window:toggle-pin', async () => {
+    pinnedToFront = !pinnedToFront
+    applyWindowTopState(true)
+    return pinnedToFront
+  })
+  ipcMain.handle('window:is-always-on-top', async () => pinnedToFront)
   ipcMain.handle('window:minimize', async () => mainWindow?.minimize())
   ipcMain.handle('window:close', async () => mainWindow?.close())
 
   // Screen capture
   ipcMain.handle('screen:capture', async () => captureScreen())
   ipcMain.handle('screen:capture-frame', async () => captureScreenFrame())
+  ipcMain.handle('screen:ocr', async (_event, payload: { imageBase64: string }) => extractScreenText(payload.imageBase64))
   ipcMain.handle('screen:active-window', async () => getActiveWindowInfo())
   ipcMain.handle('system:info', async () => getSystemInfo())
 
