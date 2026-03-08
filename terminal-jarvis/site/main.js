@@ -191,7 +191,7 @@ const buildAccessRequestMailto = ({ monetization, name, email, reference, notes 
   const subject = `Jarvis ${monetization.proPlanName} access request`
   const bodyLines = [
     `Plan: ${monetization.proPlanName}`,
-    `Payment rail: ${monetization.paymentRailLabel || 'GPay / UPI'}`,
+    `Payment rail: ${monetization.paymentRailLabel || 'Cashfree / fallback UPI'}`,
     `Name: ${name || '-'}`,
     `Email: ${email || '-'}`,
     `Payment reference: ${reference || '-'}`,
@@ -233,6 +233,7 @@ const configureMonetization = () => {
   }
 
   const upiId = monetization.upiId?.trim() ?? ''
+  const cashfreePaymentLink = monetization.cashfreePaymentLink?.trim() ?? ''
   const gpayPaymentLink = monetization.gpayPaymentLink?.trim() ?? ''
   const amountInr = monetization.upiAmountInr?.trim() ?? ''
   const payeeName = monetization.upiPayeeName?.trim() ?? ''
@@ -256,20 +257,26 @@ const configureMonetization = () => {
   paymentCheckoutButton.removeAttribute('rel')
   paymentCheckoutButton.onclick = null
 
-  if (gpayPaymentLink) {
+  if (cashfreePaymentLink) {
+    paymentCheckoutButton.href = cashfreePaymentLink
+    paymentCheckoutButton.target = '_blank'
+    paymentCheckoutButton.rel = 'noreferrer'
+    setPaymentButtonDisabled(false)
+    paymentStatusLabel.textContent = 'Live Cashfree checkout enabled. Complete payment there, then submit your access request below.'
+  } else if (gpayPaymentLink) {
     paymentCheckoutButton.href = gpayPaymentLink
     paymentCheckoutButton.target = '_blank'
     paymentCheckoutButton.rel = 'noreferrer'
     setPaymentButtonDisabled(false)
-    paymentStatusLabel.textContent = 'Live paid beta link enabled. Pay in GPay / UPI, then submit your access request below.'
+    paymentStatusLabel.textContent = 'Cashfree is not configured yet. Using the fallback GPay / UPI payment link instead.'
   } else if (upiId && isMobileDevice() && upiLink) {
     paymentCheckoutButton.href = upiLink
     setPaymentButtonDisabled(false)
-    paymentStatusLabel.textContent = 'Mobile device detected. The payment button opens your UPI app directly.'
+    paymentStatusLabel.textContent = 'Cashfree is not configured yet. Mobile device detected, so the fallback button opens your UPI app directly.'
   } else if (upiId) {
     paymentCheckoutButton.href = '#pricing'
     setPaymentButtonDisabled(false)
-    paymentStatusLabel.textContent = 'Desktop detected. Use Copy UPI ID, pay in GPay / any UPI app, then submit your access request below.'
+    paymentStatusLabel.textContent = 'Cashfree is not configured yet. Desktop detected, so use Copy Backup UPI ID, pay in GPay / any UPI app, then submit your access request below.'
     paymentCheckoutButton.onclick = (event) => {
       event.preventDefault()
       copyUpiIdButton?.click()
@@ -277,7 +284,7 @@ const configureMonetization = () => {
   } else {
     paymentCheckoutButton.href = '#pricing'
     setPaymentButtonDisabled(true)
-    paymentStatusLabel.innerHTML = 'Set <code>gpayPaymentLink</code> or <code>upiId</code> in <code>site/site-config.js</code> to turn on the paid beta CTA.'
+    paymentStatusLabel.innerHTML = 'Set <code>cashfreePaymentLink</code> in <code>site/site-config.js</code> to turn on the main paid beta CTA. Optionally add <code>gpayPaymentLink</code> or <code>upiId</code> as fallback.'
   }
 
   if (copyUpiIdButton) {
@@ -285,15 +292,15 @@ const configureMonetization = () => {
     copyUpiIdButton.classList.toggle('btn-disabled', !upiId)
     copyUpiIdButton.addEventListener('click', async () => {
       if (!upiId) {
-        paymentStatusLabel.textContent = 'Add a real UPI ID in site/site-config.js before using the paid beta CTA.'
+        paymentStatusLabel.textContent = 'Add a real fallback UPI ID in site/site-config.js before using the backup payment flow.'
         return
       }
 
       try {
         await navigator.clipboard.writeText(upiId)
-        paymentStatusLabel.textContent = `UPI ID copied: ${upiId}. Pay the beta seat amount, then submit your access request below.`
+        paymentStatusLabel.textContent = `Backup UPI ID copied: ${upiId}. Pay the beta seat amount, then submit your access request below.`
       } catch {
-        paymentStatusLabel.textContent = `Copy failed. Use this UPI ID manually: ${upiId}`
+        paymentStatusLabel.textContent = `Copy failed. Use this backup UPI ID manually: ${upiId}`
       }
     })
   }

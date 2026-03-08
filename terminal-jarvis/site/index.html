@@ -288,7 +288,7 @@ run-jarvis.bat</code></pre>
         <p class="pricing-lead">
           Jarvis is at a strong private-beta stage. That is enough for a freemium model, not a hard paywall.
           The local core should stay easy to try; the paid layer should be for early supporters, premium workflows,
-          and faster onboarding. For now, the cleanest payment path is a manual paid beta via GPay / UPI.
+          and faster onboarding. For now, the cleanest payment path is Cashfree checkout, with GPay / UPI kept as fallback only.
         </p>
         <div class="pricing-grid">
           <article class="price-card">
@@ -326,21 +326,21 @@ run-jarvis.bat</code></pre>
                 href="#pricing"
                 rel="noreferrer"
                 aria-disabled="true"
-              >Pay via GPay / UPI</a>
-              <button id="copy-upi-id" class="btn btn-ghost" type="button">Copy UPI ID</button>
+              >Pay with Cashfree</a>
+              <button id="copy-upi-id" class="btn btn-ghost" type="button">Copy Backup UPI ID</button>
             </div>
             <div class="payment-rail">
               <div class="payment-rail-row">
-                <span class="payment-rail-label">Payment rail</span>
-                <strong id="payment-rail-label" class="payment-rail-value">Manual paid beta via GPay / UPI</strong>
+                <span class="payment-rail-label">Primary rail</span>
+                <strong id="payment-rail-label" class="payment-rail-value">Cashfree Payment Link</strong>
               </div>
               <div class="payment-rail-row">
-                <span class="payment-rail-label">UPI ID</span>
+                <span class="payment-rail-label">Backup UPI</span>
                 <code id="payment-upi-id" class="payment-rail-value">Configure in site/site-config.js</code>
               </div>
             </div>
             <p id="payment-status" class="price-note">
-              Set <code>gpayPaymentLink</code> or <code>upiId</code> in <code>site/site-config.js</code> to turn on the paid beta CTA.
+              Set <code>cashfreePaymentLink</code> in <code>site/site-config.js</code> to turn on the main paid beta CTA. Keep <code>gpayPaymentLink</code> or <code>upiId</code> only as fallback.
             </p>
             <form id="beta-access-form" class="access-form">
               <div class="access-form-head">

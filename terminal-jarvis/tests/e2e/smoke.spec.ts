@@ -9,6 +9,7 @@ test('marketing page renders downloads and freemium pricing', async ({ page }) =
   await expect(page.getByRole('heading', { name: /pro beta/i })).toBeVisible()
   await expect(page.locator('#payment-checkout')).toBeVisible()
   await expect(page.locator('#copy-upi-id')).toBeVisible()
-  await expect(page.locator('#payment-status')).toContainText(/gpay|upi|paid beta/i)
+  await expect(page.locator('#payment-status')).toContainText(/cashfree|upi|paid beta/i)
+  await expect(page.locator('#payment-rail-label')).toContainText(/cashfree/i)
   await expect(page.locator('#beta-access-form')).toBeVisible()
 })
